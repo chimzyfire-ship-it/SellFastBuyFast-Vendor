@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "name": "shoplancia-vendor-portal",
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
