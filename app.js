@@ -5,13 +5,8 @@
 
 const root = document.getElementById('portal-root');
 
-// Configuration resolution with embedded public Supabase credentials
-const userConfig = window.SFBF_VENDOR_CONFIG || {};
-const config = {
-  apiUrl: userConfig.apiUrl || window.localStorage.getItem('sfbf_api_url') || 'http://localhost:4000',
-  supabaseUrl: userConfig.supabaseUrl || window.localStorage.getItem('sfbf_supabase_url') || 'https://fuqrhfxptybipxbzveyy.supabase.co',
-  supabaseAnonKey: userConfig.supabaseAnonKey || window.localStorage.getItem('sfbf_supabase_anon_key') || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ1cXJoZnhwdHliaXB4Ynp2ZXl5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5NDY3MjYsImV4cCI6MjEwMzUyMjcyNn0.Q240FBpikqiWaGytkVP1RWVHGA-ZpvdVicY9qf4pvWw',
-};
+// Runtime configuration is supplied by config.js locally or Vercel's public config endpoint.
+let config = { ...window.SFBF_VENDOR_CONFIG };
 
 // Global Reactive State
 const state = {
@@ -24,13 +19,7 @@ const state = {
   orders: [],
   returns: [],
   team: [],
-  categories: [
-    { id: 'cat-fashion', name: 'Luxury Fashion & Apparel' },
-    { id: 'cat-electronics', name: 'Smartphones & Electronics' },
-    { id: 'cat-beauty', name: 'Fragrances & Beauty' },
-    { id: 'cat-home', name: 'Home & Living' },
-    { id: 'cat-shoes', name: 'Footwear & Accessories' },
-  ],
+  categories: [],
   activeView: 'dashboard',
   catalogueFilter: 'all',
   fulfilmentFilter: 'all',
@@ -47,6 +36,11 @@ const state = {
   notice: null,
   sidebarOpen: false,
   showPassword: false,
+  workspaceError: '',
+  partialDataError: '',
+  configurationError: '',
+  dataRequestVersion: 0,
+  dataAbortController: null,
 };
 
 const VIEW_TITLES = {
@@ -55,7 +49,7 @@ const VIEW_TITLES = {
   'add-product': 'Product Studio',
   fulfilment: 'Fulfilment Queue',
   returns: 'Returns & Disputes',
-  payouts: 'Earnings & Settlements',
+  payouts: 'Payments (deferred)',
   profile: 'Business Profile & KYC',
   team: 'Team & Staff',
 };
@@ -63,6 +57,29 @@ const VIEW_TITLES = {
 // Helpers & Utilities
 function apiUrl(path) {
   return `${String(config.apiUrl).replace(/\/$/, '')}${path}`;
+}
+
+function hasRuntimeConfig(value = config) {
+  if (!['apiUrl', 'supabaseUrl', 'supabaseAnonKey'].every((key) => (
+    typeof value[key] === 'string' && value[key].trim() && !value[key].includes('YOUR-')
+  ))) return false;
+  const apiEndpoint = safeUrl(value.apiUrl);
+  const supabaseEndpoint = safeUrl(value.supabaseUrl);
+  return Boolean(apiEndpoint && supabaseEndpoint && new URL(apiEndpoint).origin !== new URL(supabaseEndpoint).origin);
+}
+
+async function resolveRuntimeConfig() {
+  if (hasRuntimeConfig()) return;
+  try {
+    const response = await fetch('/api/runtime-config', { cache: 'no-store' });
+    const payload = await response.json();
+    if (!response.ok || !payload?.success || !hasRuntimeConfig(payload.data)) {
+      throw new Error('The vendor portal is missing its public runtime configuration.');
+    }
+    config = { ...config, ...payload.data };
+  } catch (error) {
+    state.configurationError = error.message || 'The vendor portal could not load its runtime configuration.';
+  }
 }
 
 function escapeHtml(value) {
@@ -113,7 +130,7 @@ class ApiError extends Error {
 }
 
 async function api(path, options = {}) {
-  const { method = 'GET', body, idempotencyScope } = options;
+  const { method = 'GET', body, idempotencyScope, signal } = options;
   if (!state.client) throw new ApiError('Authentication client not initialized.', 'AUTH_UNAVAILABLE');
   
   const { data: { session } } = await state.client.auth.getSession();
@@ -130,8 +147,10 @@ async function api(path, options = {}) {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
-  } catch {
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
     throw new ApiError('Backend service unreachable.', 'NETWORK_ERROR');
   }
 
@@ -192,10 +211,14 @@ function statusBadge(status) {
 function render() {
   let mainContentHtml = '';
 
-  if (!state.session) {
+  if (state.configurationError) {
+    mainContentHtml = renderConfigurationError();
+  } else if (!state.session) {
     mainContentHtml = renderAuthHtml();
   } else if (state.loading && state.merchants.length === 0) {
     mainContentHtml = renderSkeletonWorkspace();
+  } else if (state.workspaceError) {
+    mainContentHtml = renderWorkspaceError();
   } else if (state.authMode === 'onboarding' || state.merchants.length === 0) {
     mainContentHtml = renderOnboardingWizardHtml();
   } else {
@@ -207,6 +230,7 @@ function render() {
     ${mainContentHtml}
     ${renderModal()}
     ${renderToastStack()}`;
+  root.setAttribute('aria-busy', String(state.loading));
 
   hydrateIcons();
 }
@@ -263,6 +287,31 @@ function renderSkeletonWorkspace() {
         <div class="skeleton skeleton-text" style="width:100%;height:38px;"></div>
       </div>
     </div>`;
+}
+
+function renderConfigurationError() {
+  return `
+    <section class="auth-shell">
+      <div class="auth-panel">
+        <div class="auth-brand-mark">${icon('settings-2')}</div>
+        <h1 class="auth-title">Portal configuration is incomplete</h1>
+        <p class="auth-subtitle">The merchant portal cannot connect until its public Supabase and Core API configuration is available.</p>
+        <div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.configurationError)}</span></div>
+        <p class="field-help">A deployment administrator should configure the vendor project. No operational data is shown until the connection is real.</p>
+      </div>
+    </section>`;
+}
+
+function renderWorkspaceError() {
+  return `
+    <section class="auth-shell">
+      <div class="auth-panel">
+        <div class="auth-brand-mark">${icon('cloud-off')}</div>
+        <h1 class="auth-title">We could not load this merchant workspace</h1>
+        <p class="auth-subtitle">${escapeHtml(state.workspaceError)}</p>
+        <button class="btn btn-primary" type="button" data-action="refresh-current">${icon('refresh-cw')} Try again</button>
+      </div>
+    </section>`;
 }
 
 /* ==========================================================================
@@ -452,19 +501,19 @@ function renderAuthHtml() {
           <div class="auth-floating-logo-wrap">
             <img src="assets/sellfastbuyfast-logo-white.png" alt="SellFastBuyFast" class="auth-floating-logo" />
           </div>
-          <h2 class="auth-hero-headline">Scale Your Business Across <span>Nigeria</span>.</h2>
-          <p class="auth-hero-description">The enterprise merchant operating system for rapid inventory management, nationwide courier dispatch, and automated Paystack settlements.</p>
+          <h2 class="auth-hero-headline">Run Your Store Across <span>Nigeria</span>.</h2>
+          <p class="auth-hero-description">A merchant workspace for catalogue management, accurate stock, and courier fulfilment updates connected to your live orders.</p>
           
           <div class="auth-hero-features">
-            <div class="auth-feature-pill">${icon('shield-check')} <span>100% Guaranteed Escrow & Verified Buyers</span></div>
-            <div class="auth-feature-pill">${icon('truck')} <span>Integrated Waybill Dispatch (GIG, DHL, Fez)</span></div>
-            <div class="auth-feature-pill">${icon('coins')} <span>Direct Automated Payouts to Any Nigerian Bank</span></div>
+            <div class="auth-feature-pill">${icon('clipboard-check')} <span>Verification before merchant activation</span></div>
+            <div class="auth-feature-pill">${icon('package-check')} <span>Live stock and catalogue moderation</span></div>
+            <div class="auth-feature-pill">${icon('truck')} <span>Record courier handoff and tracking</span></div>
           </div>
         </div>
 
         <div class="auth-hero-footer">
           <span>&copy; ${new Date().getFullYear()} SellFastBuyFast Technologies Ltd.</span>
-          <span>Verified Merchant Portal v2.0</span>
+          <span>Merchant Operations Portal</span>
         </div>
       </section>
 
@@ -487,7 +536,9 @@ function renderAuthHtml() {
 function renderOnboardingWizardHtml() {
   const user = state.session?.user;
   const userMeta = user?.user_metadata || {};
-  const defaultStore = userMeta.business_name || (user?.email ? user.email.split('@')[0] + ' Store' : 'My Store');
+  const defaultStore = userMeta.business_name || '';
+  const defaultName = userMeta.full_name || '';
+  const defaultPhone = userMeta.phone || '';
 
   return `
     <div class="page-content" style="max-width:760px;padding-top:32px;">
@@ -512,12 +563,39 @@ function renderOnboardingWizardHtml() {
 
           <div class="grid-2col">
             <div class="form-group">
+              <label class="form-label" for="onboard-full-name">Your Full Name</label>
+              <input class="input" id="onboard-full-name" name="fullName" value="${escapeAttribute(defaultName)}" autocomplete="name" required />
+            </div>
+            <div class="form-group">
               <label class="form-label" for="onboard-business-name">Business Registered Name</label>
               <input class="input" id="onboard-business-name" name="businessName" value="${escapeAttribute(defaultStore)}" required />
             </div>
+          </div>
+
+          <div class="grid-2col">
+            <div class="form-group">
+              <label class="form-label" for="onboard-email">Business Contact Email</label>
+              <input class="input" id="onboard-email" name="contactEmail" type="email" value="${escapeAttribute(user?.email || '')}" autocomplete="email" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="onboard-phone">Business Contact Phone</label>
+              <input class="input" id="onboard-phone" name="contactPhone" type="tel" value="${escapeAttribute(defaultPhone)}" autocomplete="tel" required />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="onboard-description">Store Description <span class="table-sub-text">(optional)</span></label>
+            <textarea class="textarea" id="onboard-description" name="description" placeholder="Describe the products your store sells and what customers can expect."></textarea>
+          </div>
+
+          <div class="grid-2col">
             <div class="form-group">
               <label class="form-label" for="onboard-cac">CAC Registration Number</label>
-              <input class="input" id="onboard-cac" name="cacNumber" placeholder="RC-1234567 or BN-123456" value="RC-789012" required />
+              <input class="input" id="onboard-cac" name="cacNumber" placeholder="RC-1234567 or BN-123456" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="onboard-tin">Tax Identification Number <span class="table-sub-text">(optional)</span></label>
+              <input class="input" id="onboard-tin" name="tinNumber" placeholder="Enter TIN if available" />
             </div>
           </div>
 
@@ -538,13 +616,13 @@ function renderOnboardingWizardHtml() {
             </div>
             <div class="form-group">
               <label class="form-label" for="onboard-lga">LGA / City</label>
-              <input class="input" id="onboard-lga" name="lga" placeholder="e.g. Ikeja / Lekki" value="Ikeja" required />
+              <input class="input" id="onboard-lga" name="lga" placeholder="e.g. Ikeja / Lekki" required />
             </div>
           </div>
 
           <div class="form-group">
             <label class="form-label" for="onboard-address">Warehouse / Store Physical Address</label>
-            <input class="input" id="onboard-address" name="address" placeholder="e.g. 14 Admiralty Way, Lekki Phase 1" value="Plot 12 Commercial Avenue, Ikeja" required />
+            <input class="input" id="onboard-address" name="address" placeholder="e.g. 14 Admiralty Way, Lekki Phase 1" autocomplete="street-address" required />
           </div>
 
           <div class="grid-2col">
@@ -559,19 +637,19 @@ function renderOnboardingWizardHtml() {
             </div>
             <div class="form-group">
               <label class="form-label" for="onboard-id-doc">Director ID Document URL</label>
-              <input class="input" id="onboard-id-doc" name="idDocumentUrl" type="url" value="https://drive.google.com/file/d/sample-nin" required />
+              <input class="input" id="onboard-id-doc" name="idDocumentUrl" type="url" placeholder="https://secure-document-host.example/id" required />
             </div>
           </div>
 
           <div class="form-group">
             <label class="form-label" for="onboard-utility">Utility Bill / Proof of Address Document URL</label>
-            <input class="input" id="onboard-utility" name="utilityBillUrl" type="url" value="https://drive.google.com/file/d/sample-bill" required />
+            <input class="input" id="onboard-utility" name="utilityBillUrl" type="url" placeholder="https://secure-document-host.example/utility-bill" required />
           </div>
 
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px;gap:12px;flex-wrap:wrap;">
             <button type="button" class="btn btn-secondary" data-action="sign-out">${icon('log-out')} Sign Out</button>
             <button type="submit" class="btn btn-primary" ${state.busy === 'submit-onboarding' ? 'disabled' : ''}>
-              ${state.busy === 'submit-onboarding' ? 'Activating Store…' : `${icon('check')} Activate Merchant Workspace`}
+              ${state.busy === 'submit-onboarding' ? 'Submitting…' : `${icon('send')} Submit for Verification`}
             </button>
           </div>
         </form>
@@ -599,7 +677,8 @@ function renderShellHtml() {
   const overview = state.overview;
   const pendingFulfil = overview ? overview.fulfilment.awaitingAcceptance + overview.fulfilment.awaitingPacking : 0;
   const pendingReturns = overview?.returnRequests.requested ?? 0;
-  const verification = overview?.verification?.status ?? 'approved';
+  const verification = overview?.verification?.status ?? 'pending';
+  const catalogueEnabled = overview?.merchant?.status === 'active';
 
   return `
     <div class="portal-shell">
@@ -626,7 +705,7 @@ function renderShellHtml() {
             ${navItem('add-product', 'plus-circle', 'Product Studio')}
 
             <div class="nav-section-label">Finance & Settings</div>
-            ${navItem('payouts', 'wallet', 'Settlement Ledger')}
+            ${navItem('payouts', 'circle-pause', 'Payments (deferred)')}
             ${navItem('profile', 'shield-check', 'Business & KYC')}
             ${navItem('team', 'users', 'Team & Staff')}
           </nav>
@@ -637,7 +716,7 @@ function renderShellHtml() {
             <div class="merchant-avatar">${escapeHtml((state.merchant?.businessName || 'S').charAt(0).toUpperCase())}</div>
             <div class="merchant-details">
               <div class="merchant-name">${escapeHtml(state.merchant?.businessName || 'Merchant Store')}</div>
-              <div class="merchant-role-badge">${icon('badge-check')} ${escapeHtml(overview?.viewer.memberRole || 'Owner')}</div>
+              <div class="merchant-role-badge">${icon('badge-check')} ${escapeHtml(overview?.viewer.memberRole || 'Member')}</div>
             </div>
             <button type="button" class="btn-quiet" data-action="sign-out" title="Sign Out" style="color:rgba(255,255,255,0.7);padding:6px;">
               ${icon('log-out')}
@@ -659,7 +738,7 @@ function renderShellHtml() {
 
           <div class="topbar-actions">
             ${statusBadge(verification)}
-            <button class="btn btn-primary btn-sm" type="button" data-action="navigate" data-view="add-product">
+            <button class="btn btn-primary btn-sm" type="button" data-action="navigate" data-view="add-product" ${catalogueEnabled ? '' : 'disabled'}>
               ${icon('plus')} <span style="display:none;@media(min-width:640px){display:inline}">New Product</span>
             </button>
           </div>
@@ -667,6 +746,7 @@ function renderShellHtml() {
 
         <!-- Dynamic Content View -->
         <div class="page-content">
+          ${state.partialDataError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.partialDataError)}</span><button class="btn btn-secondary btn-sm" type="button" data-action="refresh-current">Try again</button></div>` : ''}
           ${renderCurrentView()}
         </div>
       </main>
@@ -714,34 +794,34 @@ function renderDashboardView() {
       <img src="assets/vendor-receipt-macro.jpg" alt="Ambient Mesh" class="ambient-banner-bg" />
       <div class="ambient-banner-content">
         <h2 class="ambient-banner-title">Welcome back, ${escapeHtml(state.merchant?.businessName || 'Partner')}</h2>
-        <p class="ambient-banner-text">Here is your verified store performance for today. You have <strong>${pendingCount} orders</strong> ready for fulfilment.</p>
+        <p class="ambient-banner-text">Your live merchant workspace has <strong>${pendingCount} orders</strong> ready for the next fulfilment step.</p>
         <button class="btn btn-secondary btn-sm" type="button" data-action="navigate" data-view="fulfilment" style="color:var(--forest-950);font-weight:700;">
           ${icon('truck')} View Fulfilment Queue
         </button>
       </div>
     </div>
 
-    <!-- 4 Balanced Stat Metric Cards -->
+    <!-- Live operational metrics -->
     <div class="metrics-grid">
       <div class="metric-card">
         <div class="metric-header">
-          <span class="metric-title">Settlement Balance</span>
-          <div class="metric-icon-box">${icon('coins')}</div>
-        </div>
-        <div class="metric-value">₦ 1,450,000</div>
-        <div class="metric-footer">
-          <span class="metric-trend-positive">+14.2%</span> vs last cycle
-        </div>
-      </div>
-
-      <div class="metric-card">
-        <div class="metric-header">
-          <span class="metric-title">Orders to Dispatch</span>
+          <span class="metric-title">Orders to dispatch</span>
           <div class="metric-icon-box">${icon('package')}</div>
         </div>
         <div class="metric-value">${pendingCount}</div>
         <div class="metric-footer">
           <span>${overview.fulfilment.awaitingAcceptance} to accept · ${overview.fulfilment.awaitingPacking} to pack</span>
+        </div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-title">In transit</span>
+          <div class="metric-icon-box">${icon('truck')}</div>
+        </div>
+        <div class="metric-value">${overview.fulfilment.inTransit}</div>
+        <div class="metric-footer">
+          <span>Waiting for carrier delivery confirmation</span>
         </div>
       </div>
 
@@ -758,12 +838,12 @@ function renderDashboardView() {
 
       <div class="metric-card">
         <div class="metric-header">
-          <span class="metric-title">Merchant Rating</span>
-          <div class="metric-icon-box">${icon('star')}</div>
+          <span class="metric-title">Return requests</span>
+          <div class="metric-icon-box">${icon('rotate-ccw')}</div>
         </div>
-        <div class="metric-value">4.9 / 5.0</div>
+        <div class="metric-value">${overview.returnRequests.requested}</div>
         <div class="metric-footer">
-          <span>100% On-time Dispatch Score</span>
+          <span>${overview.returnRequests.open} open across all return stages</span>
         </div>
       </div>
     </div>
@@ -773,7 +853,7 @@ function renderDashboardView() {
       <div class="card-header">
         <div>
           <h2 class="card-title">Orders Requiring Action</h2>
-          <p class="card-subtitle">Accept confirmed payments and assign waybills for courier dispatch.</p>
+          <p class="card-subtitle">Accept, pack, and record a courier handoff only when each live order reaches that step.</p>
         </div>
         <button class="btn btn-quiet" type="button" data-action="navigate" data-view="fulfilment">
           View All Orders ${icon('arrow-right')}
@@ -791,6 +871,7 @@ function renderDashboardView() {
 
 function renderCatalogueView() {
   const categoryMap = new Map(state.categories.map((c) => [c.id, c.name]));
+  const catalogueEnabled = state.overview?.merchant?.status === 'active';
   let filtered = state.products;
 
   if (state.catalogueFilter === 'published') filtered = filtered.filter((p) => p.status === 'published');
@@ -824,8 +905,8 @@ function renderCatalogueView() {
         <td>${statusBadge(product.status)}</td>
         <td>
           <div class="table-actions">
-            ${variant ? `<button class="btn btn-secondary btn-sm" type="button" data-action="edit-stock" data-variant-id="${escapeAttribute(variant.id)}" data-quantity="${escapeAttribute(variant.availableQuantity)}">${icon('sliders')} Stock</button>` : ''}
-            ${product.status === 'draft' ? `<button class="btn btn-primary btn-sm" type="button" data-action="submit-product" data-product-id="${escapeAttribute(product.id)}">${icon('send')} Submit</button>` : ''}
+            ${variant ? `<button class="btn btn-secondary btn-sm" type="button" data-action="edit-stock" data-variant-id="${escapeAttribute(variant.id)}" data-quantity="${escapeAttribute(variant.availableQuantity)}" ${catalogueEnabled ? '' : 'disabled'}>${icon('sliders')} Update stock</button>` : ''}
+            ${product.status === 'draft' ? `<button class="btn btn-primary btn-sm" type="button" data-action="submit-product" data-product-id="${escapeAttribute(product.id)}" ${catalogueEnabled ? '' : 'disabled'}>${icon('send')} Submit for review</button>` : ''}
           </div>
         </td>
       </tr>`;
@@ -837,10 +918,12 @@ function renderCatalogueView() {
         <h1 class="page-title">Catalogue & Stock</h1>
         <p class="page-subtitle">Manage listings, set live quantities, and submit new items for moderation.</p>
       </div>
-      <button class="btn btn-primary" type="button" data-action="navigate" data-view="add-product">
+      <button class="btn btn-primary" type="button" data-action="navigate" data-view="add-product" ${catalogueEnabled ? '' : 'disabled'}>
         ${icon('plus')} Add New Product
       </button>
     </div>
+
+    ${catalogueEnabled ? '' : `<div class="error-summary" role="status">${icon('clock')} <span>Catalogue changes unlock after Operations approves this merchant verification.</span></div>`}
 
     <div class="card">
       <div class="card-header">
@@ -879,12 +962,14 @@ function renderCatalogueView() {
 
 function renderAddProductView() {
   const categoryOptions = state.categories.map((c) => `<option value="${escapeAttribute(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+  const catalogueEnabled = state.overview?.merchant?.status === 'active';
+  const canCreate = catalogueEnabled && state.categories.length > 0;
 
   return `
     <div class="page-header">
       <div>
         <h1 class="page-title">Product Studio</h1>
-        <p class="page-subtitle">Create and publish verified product listings on SellFastBuyFast.</p>
+        <p class="page-subtitle">Create a draft or submit a product for Operations moderation. Customer search updates only after approval.</p>
       </div>
       <button class="btn btn-secondary" type="button" data-action="navigate" data-view="catalogue">
         ${icon('arrow-left')} Back to Catalogue
@@ -901,6 +986,7 @@ function renderAddProductView() {
 
       <div class="card-body">
         ${state.formError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.formError)}</span></div>` : ''}
+        ${catalogueEnabled ? (state.categories.length ? '' : `<div class="error-summary" role="alert">${icon('alert-circle')} <span>Product categories are unavailable. Refresh the workspace before adding a product.</span></div>`) : `<div class="error-summary" role="status">${icon('clock')} <span>Product creation unlocks after Operations approves this merchant verification.</span></div>`}
 
         <div class="grid-2col">
           <!-- Left Column -->
@@ -913,7 +999,7 @@ function renderAddProductView() {
             <div class="grid-2col">
               <div class="form-group">
                 <label class="form-label" for="prod-category">Category</label>
-                <select class="select" id="prod-category" name="categoryId" required>
+                <select class="select" id="prod-category" name="categoryId" required ${canCreate ? '' : 'disabled'}>
                   <option value="">Select Category</option>
                   ${categoryOptions}
                 </select>
@@ -946,7 +1032,7 @@ function renderAddProductView() {
 
             <div class="form-group">
               <label class="form-label" for="prod-image">High-Resolution Image URL</label>
-              <input class="input" id="prod-image" name="imageUrl" type="url" placeholder="https://images.unsplash.com/..." required />
+              <input class="input" id="prod-image" name="imageUrl" type="url" placeholder="https://your-image-host.example/product.jpg" required />
               <span class="field-help">Use clean studio product photos with light or white backgrounds.</span>
             </div>
 
@@ -954,8 +1040,8 @@ function renderAddProductView() {
               <label class="checkbox-row" style="margin:0;">
                 <input type="checkbox" name="submitForReview" checked />
                 <span>
-                  <strong>Submit directly for Operations Moderation</strong><br />
-                  <small style="color:var(--ink-muted);">Once approved, this item will immediately appear in customer search results.</small>
+                  <strong>Submit for Operations moderation</strong><br />
+                  <small style="color:var(--ink-muted);">Customer search updates only after Operations publishes the approved item.</small>
                 </span>
               </label>
             </div>
@@ -965,8 +1051,8 @@ function renderAddProductView() {
 
       <div class="modal-footer">
         <button class="btn btn-secondary" type="button" data-action="navigate" data-view="catalogue">Cancel</button>
-        <button class="btn btn-primary" type="submit" ${state.busy === 'create-product' ? 'disabled' : ''}>
-          ${state.busy === 'create-product' ? 'Saving Product…' : `${icon('save')} Save & Submit Product`}
+        <button class="btn btn-primary" type="submit" ${state.busy === 'create-product' || !canCreate ? 'disabled' : ''}>
+          ${state.busy === 'create-product' ? 'Saving…' : `${icon('save')} Save product`}
         </button>
       </div>
     </form>`;
@@ -982,7 +1068,7 @@ function renderOrdersTable(orderList, concise = false) {
       <div class="empty-state">
         <div class="empty-icon-wrap">${icon('check-circle-2')}</div>
         <h3 class="empty-title">No pending orders</h3>
-        <p class="empty-text">All incoming customer orders have been processed and dispatched.</p>
+        <p class="empty-text">There are no live orders that need a merchant action right now.</p>
       </div>`;
   }
 
@@ -996,9 +1082,9 @@ function renderOrdersTable(orderList, concise = false) {
     } else if (order.status === 'processing' && order.shipment?.status === 'pending') {
       actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="pack-order" data-order-id="${escapeAttribute(order.id)}">${icon('box')} Mark Packed</button>`;
     } else if (order.status === 'processing' && order.shipment?.status === 'packed') {
-      actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="ship-order" data-order-id="${escapeAttribute(order.id)}" data-order-number="${escapeAttribute(order.orderNumber)}">${icon('send')} Dispatch</button>`;
+      actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="ship-order" data-order-id="${escapeAttribute(order.id)}" data-order-number="${escapeAttribute(order.orderNumber)}">${icon('send')} Record courier handoff</button>`;
     } else if (order.status === 'in_transit') {
-      actionBtn = `<span style="font-size:12.5px;color:var(--forest-700);font-weight:700;">${icon('truck')} In Transit</span>`;
+      actionBtn = `<span style="font-size:12.5px;color:var(--forest-700);font-weight:700;">${icon('truck')} Awaiting carrier delivery confirmation</span>`;
     } else {
       actionBtn = `<span class="table-sub-text">Completed</span>`;
     }
@@ -1040,7 +1126,7 @@ function renderFulfilmentView() {
     <div class="page-header">
       <div>
         <h1 class="page-title">Fulfilment Queue</h1>
-        <p class="page-subtitle">Accept orders within 4 hours and hand over packed items to verified couriers.</p>
+        <p class="page-subtitle">Accept, pack, and record courier handoff in the sequence confirmed by the live order state.</p>
       </div>
     </div>
 
@@ -1048,7 +1134,7 @@ function renderFulfilmentView() {
       <div class="card-header">
         <div>
           <h2 class="card-title">Active Orders</h2>
-          <p class="card-subtitle">All orders are backed by verified Paystack customer escrow payments.</p>
+          <p class="card-subtitle">Delivery confirmation is completed by authorised platform operations after the carrier handoff.</p>
         </div>
       </div>
       <div class="table-container">
@@ -1122,49 +1208,21 @@ function renderPayoutsView() {
   return `
     <div class="page-header">
       <div>
-        <h1 class="page-title">Earnings & Settlement Ledger</h1>
-        <p class="page-subtitle">Double-entry accounting, settlement balances, and bank transfer logs.</p>
+        <h1 class="page-title">Payments</h1>
+        <p class="page-subtitle">Payment operations are deliberately separate from merchant fulfilment.</p>
       </div>
     </div>
 
-    <div class="grid-2col">
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <h2 class="card-title">Available for Settlement</h2>
-            <p class="card-subtitle">Funds cleared after confirmed customer delivery (24-hour safety window).</p>
-          </div>
-          <span class="status-pill status-pill-success">${icon('shield-check')} Verified Account</span>
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Payment module deferred</h2>
+          <p class="card-subtitle">The portal does not display invented balances or enable transfers.</p>
         </div>
-        <div class="card-body">
-          <div style="font-family:var(--font-numbers);font-size:32px;font-weight:800;color:var(--forest-900);margin-bottom:12px;">
-            ₦ 1,450,000.00
-          </div>
-          <p style="font-size:13.5px;color:var(--ink-muted);line-height:1.6;margin-bottom:20px;">
-            All settlements are reconciled against verified Paystack transfers and logged with immutable double-entry journal records.
-          </p>
-          <button class="btn btn-secondary" type="button" disabled style="opacity:0.8;">
-            ${icon('wallet')} Request Payout to NUBAN
-          </button>
-        </div>
+        <span class="status-pill status-pill-neutral">${icon('circle-pause')} Deferred</span>
       </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <h2 class="card-title">Payment Module Boundary</h2>
-            <p class="card-subtitle">Live Paystack Integration Status</p>
-          </div>
-          <span class="status-pill status-pill-neutral">${icon('info')} Notice</span>
-        </div>
-        <div class="card-body">
-          <p style="font-size:13.5px;color:var(--ink-secondary);line-height:1.6;margin-bottom:14px;">
-            Settlement balances and bank-recipient setup are operational on the backend. Live provider webhook dispatches run in verified sandbox mode until launch.
-          </p>
-          <div style="background:var(--page-subtle);padding:14px;border-radius:var(--radius-sm);font-size:13px;color:var(--ink-muted);">
-            Destination NUBAN: <strong>Guaranty Trust Bank (0123456789)</strong>
-          </div>
-        </div>
+      <div class="card-body">
+        <p style="font-size:13.5px;color:var(--ink-secondary);line-height:1.6;margin:0;">Payouts, settlement balances, bank-recipient setup, transfers, refunds, and provider actions will be enabled only in the dedicated payment module after sandbox verification.</p>
       </div>
     </div>`;
 }
@@ -1233,16 +1291,50 @@ function renderProfileView() {
             <h2 class="card-title">KYC & Compliance Status</h2>
             <p class="card-subtitle">Audited by SellFastBuyFast Operations.</p>
           </div>
-          ${statusBadge(ver.status || 'approved')}
+          ${statusBadge(ver.status || 'pending')}
         </div>
         <div class="card-body">
+          ${ver.rejectionReason ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(ver.rejectionReason)}</span></div>` : ''}
           <div style="background:var(--page-subtle);padding:18px;border-radius:var(--radius-md);border:1px solid var(--border-light);margin-bottom:20px;">
-            <div style="font-weight:700;margin-bottom:4px;color:var(--forest-900);">Compliance Level 1: Fully Verified</div>
-            <p style="font-size:13px;color:var(--ink-muted);line-height:1.5;">
-              Your business CAC, Director ID, and warehouse proof of address have been approved.
-            </p>
+            <div style="font-weight:700;margin-bottom:4px;color:var(--forest-900);">Verification status: ${escapeHtml(String(ver.status || 'pending').replace(/_/g, ' '))}</div>
+            <p style="font-size:13px;color:var(--ink-muted);line-height:1.5;">Operations reviews submitted CAC, identity, and address documents. Product creation becomes available after the merchant is activated.</p>
           </div>
-          <div class="table-sub-text">Last Updated: ${formatDate(ver.updatedAt || new Date())}</div>
+          <div class="table-sub-text">Last Updated: ${formatDate(ver.updatedAt)}</div>
+          ${isOwner && ver.status !== 'approved' ? `
+            <form id="verification-submission-form" novalidate style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border-light);">
+              <h3 style="font-size:14px;margin:0 0 4px;color:var(--forest-900);">Update verification documents</h3>
+              <p class="table-sub-text" style="margin:0 0 14px;">Submit corrected documents when requested by Operations.</p>
+              ${state.formError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.formError)}</span></div>` : ''}
+              <div class="form-group">
+                <label class="form-label" for="verify-cac">CAC Registration Number</label>
+                <input class="input" id="verify-cac" name="cacNumber" required />
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="verify-tin">Tax Identification Number <span class="table-sub-text">(optional)</span></label>
+                <input class="input" id="verify-tin" name="tinNumber" />
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="verify-id-type">Director ID Type</label>
+                <select class="select" id="verify-id-type" name="idType" required>
+                  <option value="national_id">National Identity Card (NIN)</option>
+                  <option value="passport">International Passport</option>
+                  <option value="drivers_license">Driver's Licence (FRSC)</option>
+                  <option value="voters_card">Voter's Card (INEC)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="verify-id-url">Director ID Document URL</label>
+                <input class="input" id="verify-id-url" name="idDocumentUrl" type="url" placeholder="https://secure-document-host.example/id" required />
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="verify-utility-url">Utility Bill URL</label>
+                <input class="input" id="verify-utility-url" name="utilityBillUrl" type="url" placeholder="https://secure-document-host.example/utility-bill" required />
+              </div>
+              <button class="btn btn-secondary" type="submit" ${state.busy === 'resubmit-verification' ? 'disabled' : ''}>
+                ${state.busy === 'resubmit-verification' ? 'Submitting…' : `${icon('refresh-cw')} Submit updated documents`}
+              </button>
+            </form>
+          ` : ''}
         </div>
       </div>
     </div>`;
@@ -1276,7 +1368,7 @@ function renderTeamView() {
       <div class="card-header">
         <div>
           <h2 class="card-title">Active Members (${state.team.length})</h2>
-          <p class="card-subtitle">Staff members can pack and dispatch orders; only Owners can modify bank accounts.</p>
+          <p class="card-subtitle">Workspace roles are shown from the live merchant membership roster.</p>
         </div>
       </div>
       <div class="table-container">
@@ -1340,7 +1432,7 @@ function renderModal() {
           <div class="modal-header">
             <div>
               <h3 class="modal-title">Assign Courier & Waybill</h3>
-              <p class="table-sub-text">Dispatch Order ${escapeHtml(state.modal.orderNumber)}</p>
+              <p class="table-sub-text">Record courier handoff for ${escapeHtml(state.modal.orderNumber)}</p>
             </div>
             <button class="modal-close-btn" type="button" data-action="close-modal">${icon('x')}</button>
           </div>
@@ -1372,7 +1464,7 @@ function renderModal() {
           <div class="modal-footer">
             <button class="btn btn-secondary" type="button" data-action="close-modal">Cancel</button>
             <button class="btn btn-primary" type="submit" ${state.busy === 'ship-order' ? 'disabled' : ''}>
-              ${state.busy === 'ship-order' ? 'Confirming…' : `${icon('truck')} Confirm Dispatch`}
+              ${state.busy === 'ship-order' ? 'Recording…' : `${icon('truck')} Record courier handoff`}
             </button>
           </div>
         </form>
@@ -1415,155 +1507,75 @@ function renderModal() {
 }
 
 /* ==========================================================================
-   DEFAULT / FALLBACK WORKSPACE SYNTHESIS
-   ========================================================================== */
-
-function initializeFallbackWorkspace(user) {
-  const storeName = user?.user_metadata?.business_name || (user?.email ? user.email.split('@')[0].toUpperCase() + ' Official Store' : 'SellFastBuyFast Luxury Store');
-
-  state.merchants = [{
-    id: 'm-default',
-    slug: 'sfbf-official-store',
-    businessName: storeName,
-    description: 'Verified Nigerian merchant specializing in authentic luxury fashion, electronics, and lifestyle goods.',
-    contactEmail: user?.email || 'store@sellfastbuyfast.com',
-    contactPhone: user?.user_metadata?.phone || '+234 801 234 5678',
-    status: 'active',
-  }];
-
-  state.merchant = state.merchants[0];
-
-  state.overview = {
-    merchant: state.merchant,
-    viewer: { memberRole: 'owner', isOwner: true },
-    catalogue: { total: 6, published: 5, draft: 1, pendingApproval: 0 },
-    fulfilment: { awaitingAcceptance: 1, awaitingPacking: 1, inTransit: 2 },
-    returnRequests: { requested: 0, open: 0 },
-    verification: { status: 'approved', rejectionReason: null, updatedAt: new Date() },
-  };
-
-  state.products = [
-    {
-      id: 'p-1',
-      title: 'Architectural Italian Leather Handbag',
-      categoryId: 'cat-fashion',
-      status: 'published',
-      variants: [{ id: 'v-1', sku: 'SFBF-HB-01', priceMinor: 8500000, availableQuantity: 8, reservedQuantity: 1 }],
-      media: [{ mediaType: 'image', mediaUrl: 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=400&q=80' }],
-    },
-    {
-      id: 'p-2',
-      title: 'Midnight Chronograph Smartwatch Series X',
-      categoryId: 'cat-electronics',
-      status: 'published',
-      variants: [{ id: 'v-2', sku: 'SFBF-WATCH-02', priceMinor: 12500000, availableQuantity: 14, reservedQuantity: 2 }],
-      media: [{ mediaType: 'image', mediaUrl: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=400&q=80' }],
-    },
-    {
-      id: 'p-3',
-      title: 'Luxe Oud Imperial Eau de Parfum (100ml)',
-      categoryId: 'cat-beauty',
-      status: 'published',
-      variants: [{ id: 'v-3', sku: 'SFBF-PERF-03', priceMinor: 4800000, availableQuantity: 22, reservedQuantity: 0 }],
-      media: [{ mediaType: 'image', mediaUrl: 'https://images.unsplash.com/photo-1594035910387-fea47794261f?auto=format&fit=crop&w=400&q=80' }],
-    },
-    {
-      id: 'p-4',
-      title: 'Monochrome Runner Pro Sneakers',
-      categoryId: 'cat-shoes',
-      status: 'published',
-      variants: [{ id: 'v-4', sku: 'SFBF-SNK-04', priceMinor: 5200000, availableQuantity: 5, reservedQuantity: 0 }],
-      media: [{ mediaType: 'image', mediaUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=400&q=80' }],
-    },
-    {
-      id: 'p-5',
-      title: 'Handwoven Moroccan Wool Accent Rug',
-      categoryId: 'cat-home',
-      status: 'draft',
-      variants: [{ id: 'v-5', sku: 'SFBF-RUG-05', priceMinor: 9500000, availableQuantity: 3, reservedQuantity: 0 }],
-      media: [{ mediaType: 'image', mediaUrl: 'https://images.unsplash.com/photo-1600121848594-d8644e57abab?auto=format&fit=crop&w=400&q=80' }],
-    },
-  ];
-
-  state.orders = [
-    {
-      id: 'ord-101',
-      orderNumber: 'SFBF-ORD-88219',
-      status: 'payment_confirmed',
-      createdAt: new Date(Date.now() - 3600000),
-      lines: [{ productTitle: 'Architectural Italian Leather Handbag', quantity: 1 }],
-      deliveryAddress: { contactName: 'Chioma Okonkwo', streetAddress: '15 Admiralty Way', lga: 'Lekki Phase 1', state: 'Lagos' },
-      shipment: { status: 'pending' },
-    },
-    {
-      id: 'ord-102',
-      orderNumber: 'SFBF-ORD-88218',
-      status: 'processing',
-      createdAt: new Date(Date.now() - 14400000),
-      lines: [{ productTitle: 'Midnight Chronograph Smartwatch', quantity: 1 }],
-      deliveryAddress: { contactName: 'Babajide Adeleke', streetAddress: '42 Isaac John Street', lga: 'Ikeja GRA', state: 'Lagos' },
-      shipment: { status: 'packed' },
-    },
-    {
-      id: 'ord-103',
-      orderNumber: 'SFBF-ORD-88190',
-      status: 'in_transit',
-      createdAt: new Date(Date.now() - 86400000),
-      lines: [{ productTitle: 'Luxe Oud Imperial Eau de Parfum', quantity: 2 }],
-      deliveryAddress: { contactName: 'Amina Bello', streetAddress: '7 Gana Street', lga: 'Maitama', state: 'Abuja' },
-      shipment: { status: 'in_transit', trackingCode: 'GIG-ABJ-771920' },
-    },
-  ];
-
-  state.team = [
-    { fullName: user?.user_metadata?.full_name || 'Chimzy Charles', email: user?.email || 'chimzycharles001@gmail.com', role: 'Owner', createdAt: new Date() },
-    { fullName: 'Operations Associate', email: 'dispatch@sellfastbuyfast.com', role: 'Staff', createdAt: new Date(Date.now() - 2592000000) },
-  ];
-}
-
-/* ==========================================================================
    DATA LOADING & WORKSPACE DISPATCH
    ========================================================================== */
 
+function requestErrorMessage(error, fallback = 'The request could not be completed.') {
+  return error?.message || fallback;
+}
+
 async function loadMerchantData() {
   if (!state.merchant) return;
+  const requestVersion = ++state.dataRequestVersion;
+  state.dataAbortController?.abort();
+  const controller = new AbortController();
+  state.dataAbortController = controller;
   state.loading = true;
+  state.workspaceError = '';
+  state.partialDataError = '';
   render();
 
   try {
     const merchantId = state.merchant.id;
     const results = await Promise.allSettled([
-      api(`/v1/vendor/merchant/${merchantId}/overview`),
-      api(`/v1/catalog-management/merchant/${merchantId}/products`),
-      api(`/v1/fulfilment/merchant/${merchantId}/orders`),
-      api(`/v1/vendor/merchant/${merchantId}/returns`),
-      api(`/v1/vendor/merchant/${merchantId}/team`),
-      api('/v1/catalog/categories'),
+      api(`/v1/vendor/merchant/${merchantId}/overview`, { signal: controller.signal }),
+      api(`/v1/catalog-management/merchant/${merchantId}/products`, { signal: controller.signal }),
+      api(`/v1/fulfilment/merchant/${merchantId}/orders`, { signal: controller.signal }),
+      api(`/v1/vendor/merchant/${merchantId}/returns`, { signal: controller.signal }),
+      api(`/v1/vendor/merchant/${merchantId}/team`, { signal: controller.signal }),
+      api('/v1/catalog/categories', { signal: controller.signal }),
     ]);
+    if (requestVersion !== state.dataRequestVersion) return;
 
     const [overview, products, orders, returns, team, categories] = results;
-    if (overview.status === 'fulfilled') state.overview = overview.value;
-    if (products.status === 'fulfilled') state.products = products.value;
-    if (orders.status === 'fulfilled') state.orders = orders.value;
-    if (returns.status === 'fulfilled') state.returns = returns.value;
-    if (team.status === 'fulfilled') state.team = team.value;
-    if (categories.status === 'fulfilled') state.categories = categories.value;
-  } catch {
-    // Keep local synthesis
+    if (overview.status !== 'fulfilled') throw overview.reason;
+    state.overview = overview.value;
+    state.products = products.status === 'fulfilled' ? products.value : [];
+    state.orders = orders.status === 'fulfilled' ? orders.value : [];
+    state.returns = returns.status === 'fulfilled' ? returns.value : [];
+    state.team = team.status === 'fulfilled' ? team.value : [];
+    state.categories = categories.status === 'fulfilled' ? categories.value : [];
+    if (results.some((result) => result.status === 'rejected')) {
+      state.partialDataError = 'Some live workspace data could not be loaded. Nothing has been substituted with demo data.';
+    }
+  } catch (error) {
+    if (error?.name === 'AbortError' || requestVersion !== state.dataRequestVersion) return;
+    state.overview = null;
+    state.products = [];
+    state.orders = [];
+    state.returns = [];
+    state.team = [];
+    state.categories = [];
+    state.workspaceError = requestErrorMessage(error, 'The Core API is unavailable. Check the deployment and try again.');
+    throw error;
+  } finally {
+    if (requestVersion === state.dataRequestVersion) {
+      state.loading = false;
+      state.dataAbortController = null;
+      render();
+    }
   }
-
-  state.loading = false;
-  render();
 }
 
 async function loadWorkspace() {
   state.loading = true;
+  state.workspaceError = '';
   render();
   try {
     const data = await api('/v1/vendor/me');
     state.merchants = data.merchants || [];
     const savedId = window.localStorage.getItem('sfbf-vendor-merchant-id');
-    state.merchant = state.merchants.find((m) => m.id === savedId) || state.merchants[0] || null;
+    state.merchant = state.merchants.find((merchant) => merchant.id === savedId) || state.merchants[0] || null;
 
     if (!state.merchant) {
       state.authMode = 'onboarding';
@@ -1571,11 +1583,30 @@ async function loadWorkspace() {
       render();
       return;
     }
-
     await loadMerchantData();
-  } catch {
-    initializeFallbackWorkspace(state.session?.user);
+  } catch (error) {
     state.loading = false;
+    state.merchants = [];
+    state.merchant = null;
+    state.workspaceError = requestErrorMessage(error, 'The Core API is unavailable. Check the deployment and try again.');
+    render();
+  }
+}
+
+async function performServerAction(key, operation, successMessage) {
+  state.busy = key;
+  state.formError = '';
+  render();
+  try {
+    await operation();
+    state.modal = null;
+    await loadMerchantData();
+    showNotice(successMessage);
+  } catch (error) {
+    state.formError = requestErrorMessage(error);
+    showNotice(state.formError, 'error');
+  } finally {
+    state.busy = null;
     render();
   }
 }
@@ -1667,10 +1698,11 @@ document.addEventListener('click', async (event) => {
 
   if (action === 'refresh-current') {
     try {
-      await loadMerchantData();
+      if (state.merchant) await loadMerchantData();
+      else if (state.session) await loadWorkspace();
       showNotice('Live data refreshed.');
-    } catch {
-      showNotice('Refreshed workspace.');
+    } catch (error) {
+      showNotice(requestErrorMessage(error, 'The workspace could not be refreshed.'), 'error');
     }
     return;
   }
@@ -1707,51 +1739,28 @@ document.addEventListener('click', async (event) => {
 
   if (action === 'accept-order') {
     const orderId = button.dataset.orderId;
-    const target = state.orders.find((o) => o.id === orderId);
-    if (target) {
-      target.status = 'processing';
-      if (target.shipment) target.shipment.status = 'pending';
-    }
-    showNotice('Order accepted. Please prepare package for courier handoff.');
-    render();
-    try {
-      await api(`/v1/fulfilment/orders/${orderId}/accept`, {
+    await performServerAction('accept-order', () => api(`/v1/fulfilment/orders/${orderId}/accept`, {
         method: 'POST',
         idempotencyScope: 'fulfilment-accept',
-      });
-    } catch {}
+      }), 'Order accepted. Prepare it for packing.');
     return;
   }
 
   if (action === 'pack-order') {
     const orderId = button.dataset.orderId;
-    const target = state.orders.find((o) => o.id === orderId);
-    if (target && target.shipment) {
-      target.shipment.status = 'packed';
-    }
-    showNotice('Order marked packed. Ready for waybill dispatch.');
-    render();
-    try {
-      await api(`/v1/fulfilment/orders/${orderId}/pack`, {
+    await performServerAction('pack-order', () => api(`/v1/fulfilment/orders/${orderId}/pack`, {
         method: 'POST',
         idempotencyScope: 'fulfilment-pack',
-      });
-    } catch {}
+      }), 'Order marked packed. Record the courier handoff when it occurs.');
     return;
   }
 
   if (action === 'submit-product') {
     const productId = button.dataset.productId;
-    const prod = state.products.find((p) => p.id === productId);
-    if (prod) prod.status = 'pending_approval';
-    showNotice('Product submitted for operations review.');
-    render();
-    try {
-      await api(`/v1/catalog-management/products/${productId}/submit`, {
+    await performServerAction('submit-product', () => api(`/v1/catalog-management/products/${productId}/submit`, {
         method: 'POST',
         idempotencyScope: 'catalog-submit',
-      });
-    } catch {}
+      }), 'Product submitted for Operations review.');
   }
 });
 
@@ -1914,27 +1923,62 @@ document.addEventListener('submit', async (event) => {
 
   // KYC Onboarding Form
   if (form.id === 'kyc-onboarding-form') {
+    const fullName = form.elements.fullName.value.trim();
     const businessName = form.elements.businessName.value.trim();
+    const description = form.elements.description.value.trim();
+    const contactEmail = form.elements.contactEmail.value.trim();
+    const contactPhone = form.elements.contactPhone.value.trim();
     const stateVal = form.elements.state.value;
     const lga = form.elements.lga.value.trim();
     const address = form.elements.address.value.trim();
+    const cacNumber = form.elements.cacNumber.value.trim();
+    const tinNumber = form.elements.tinNumber.value.trim();
+    const idType = form.elements.idType.value;
+    const idDocumentUrl = form.elements.idDocumentUrl.value.trim();
+    const utilityBillUrl = form.elements.utilityBillUrl.value.trim();
 
-    state.busy = 'submit-onboarding';
-    render();
-
-    initializeFallbackWorkspace(state.session?.user);
-    if (state.merchant) {
-      state.merchant.businessName = businessName;
-      state.merchant.state = stateVal;
-      state.merchant.lga = lga;
-      state.merchant.address = address;
+    if (!fullName || !businessName || !contactEmail || !contactPhone || !stateVal || !lga || !address || !cacNumber || !idType || !safeUrl(idDocumentUrl) || !safeUrl(utilityBillUrl)) {
+      state.formError = 'Complete every required identity field and provide valid document URLs.';
+      render();
+      return;
     }
 
-    state.authMode = 'signin';
-    state.activeView = 'dashboard';
-    showNotice('Store workspace activated! Welcome to SellFastBuyFast.');
-    state.busy = null;
+    state.busy = 'submit-onboarding';
+    state.formError = '';
     render();
+    try {
+      const created = await api('/v1/vendor/onboarding', {
+        method: 'POST',
+        idempotencyScope: 'vendor-onboarding',
+        body: {
+          fullName,
+          businessName,
+          description: description || undefined,
+          contactEmail,
+          contactPhone,
+          state: stateVal,
+          lga,
+          address,
+          cacNumber,
+          tinNumber: tinNumber || undefined,
+          idType,
+          idDocumentUrl,
+          utilityBillUrl,
+        },
+      });
+      state.merchant = created.merchant;
+      state.merchants = [created.merchant];
+      state.authMode = 'signin';
+      state.activeView = 'dashboard';
+      await loadMerchantData();
+      showNotice('Verification submitted. Operations will activate this workspace after review.');
+    } catch (error) {
+      state.formError = requestErrorMessage(error, 'Verification could not be submitted.');
+      showNotice(state.formError, 'error');
+    } finally {
+      state.busy = null;
+      render();
+    }
     return;
   }
 
@@ -1949,25 +1993,11 @@ document.addEventListener('submit', async (event) => {
       return;
     }
 
-    for (const prod of state.products) {
-      const v = prod.variants?.find((item) => item.id === variantId);
-      if (v) {
-        v.availableQuantity = availableQuantity;
-        break;
-      }
-    }
-
-    state.modal = null;
-    showNotice('Available stock quantity updated.');
-    render();
-
-    try {
-      await api(`/v1/catalog-management/variants/${variantId}/inventory`, {
+    await performServerAction('set-stock', () => api(`/v1/catalog-management/variants/${variantId}/inventory`, {
         method: 'PATCH',
         idempotencyScope: 'catalog-inventory',
         body: { availableQuantity },
-      });
-    } catch {}
+      }), 'Available stock quantity updated from the live inventory record.');
     return;
   }
 
@@ -1976,24 +2006,19 @@ document.addEventListener('submit', async (event) => {
     const orderId = form.elements.orderId.value;
     const carrier = form.elements.carrier.value.trim();
     const trackingCode = form.elements.trackingCode.value.trim();
+    const pickupEvidenceUrl = form.elements.pickupEvidenceUrl.value.trim();
 
-    const target = state.orders.find((o) => o.id === orderId);
-    if (target) {
-      target.status = 'in_transit';
-      target.shipment = { status: 'in_transit', carrier, trackingCode };
+    if (!carrier || !trackingCode || (pickupEvidenceUrl && !safeUrl(pickupEvidenceUrl))) {
+      state.formError = 'Enter a carrier, tracking number, and a valid pickup-evidence URL when provided.';
+      render();
+      return;
     }
 
-    state.modal = null;
-    showNotice(`Dispatched via ${carrier} (Tracking: ${trackingCode})`);
-    render();
-
-    try {
-      await api(`/v1/fulfilment/orders/${orderId}/ship`, {
+    await performServerAction('ship-order', () => api(`/v1/fulfilment/orders/${orderId}/ship`, {
         method: 'POST',
         idempotencyScope: 'fulfilment-ship',
-        body: { carrier, trackingCode },
-      });
-    } catch {}
+        body: { carrier, trackingCode, pickupEvidenceUrl: pickupEvidenceUrl || undefined },
+      }), 'Courier handoff recorded. The customer was notified with the tracking update.');
     return;
   }
 
@@ -2008,35 +2033,15 @@ document.addEventListener('submit', async (event) => {
     const imageUrl = form.elements.imageUrl.value.trim();
     const submitForReview = form.elements.submitForReview.checked;
 
-    if (!title || !categoryId || !sku || !priceNaira || !availableQuantity || !description || !imageUrl) {
+    const priceMinor = Math.round(priceNaira * 100);
+    if (!title || !categoryId || !sku || !Number.isFinite(priceNaira) || !Number.isSafeInteger(priceMinor) || priceNaira <= 0 || !Number.isSafeInteger(availableQuantity) || availableQuantity < 0 || !description || !safeUrl(imageUrl)) {
       state.formError = 'Please fill in all product specification fields.';
       render();
       return;
     }
 
-    const priceMinor = Math.round(priceNaira * 100);
-    const newProduct = {
-      id: `p-${Date.now()}`,
-      title,
-      categoryId,
-      status: submitForReview ? 'pending_approval' : 'draft',
-      variants: [{ id: `v-${Date.now()}`, sku, priceMinor, availableQuantity }],
-      media: [{ mediaType: 'image', mediaUrl: imageUrl }],
-    };
-
-    state.products.unshift(newProduct);
-    if (state.overview) {
-      state.overview.catalogue.total += 1;
-      if (submitForReview) state.overview.catalogue.pendingApproval += 1;
-      else state.overview.catalogue.draft += 1;
-    }
-
-    state.activeView = 'catalogue';
-    showNotice(submitForReview ? 'Product created and submitted for review!' : 'Product saved as draft.');
-    render();
-
-    try {
-      await api(`/v1/catalog-management/merchant/${state.merchant.id}/products`, {
+    await performServerAction('create-product', async () => {
+      const created = await api(`/v1/catalog-management/merchant/${state.merchant.id}/products`, {
         method: 'POST',
         idempotencyScope: 'catalog-create',
         body: {
@@ -2047,7 +2052,14 @@ document.addEventListener('submit', async (event) => {
           media: [{ mediaUrl: imageUrl, mediaType: 'image', altText: title, sortOrder: 0 }],
         },
       });
-    } catch {}
+      if (submitForReview) {
+        await api(`/v1/catalog-management/products/${created.id}/submit`, {
+          method: 'POST',
+          idempotencyScope: 'catalog-submit',
+        });
+      }
+      state.activeView = 'catalogue';
+    }, submitForReview ? 'Product created and submitted for Operations review.' : 'Product saved as a draft.');
     return;
   }
 
@@ -2057,23 +2069,11 @@ document.addEventListener('submit', async (event) => {
     const decision = form.elements.decision.value;
     const note = form.elements.note.value.trim();
 
-    const target = state.returns.find((r) => r.id === returnId);
-    if (target) {
-      target.status = decision;
-      target.decisionNote = note;
-    }
-
-    state.modal = null;
-    showNotice(`Return request marked as ${decision}.`);
-    render();
-
-    try {
-      await api(`/v1/customer-care/returns/${returnId}/decision`, {
+    await performServerAction('return-decision', () => api(`/v1/customer-care/returns/${returnId}/decision`, {
         method: 'POST',
         idempotencyScope: 'return-decision',
         body: { decision, note },
-      });
-    } catch {}
+      }), `Return request ${decision}. The customer has been notified.`);
     return;
   }
 
@@ -2084,58 +2084,85 @@ document.addEventListener('submit', async (event) => {
     const contactEmail = form.elements.contactEmail.value.trim();
     const contactPhone = form.elements.contactPhone.value.trim();
 
-    if (state.merchant) {
-      state.merchant.businessName = businessName;
-      state.merchant.description = description;
-      state.merchant.contactEmail = contactEmail;
-      state.merchant.contactPhone = contactPhone;
+    if (!businessName || !contactEmail || !contactPhone) {
+      state.formError = 'Business name, contact email, and phone are required.';
+      render();
+      return;
     }
-
-    showNotice('Business profile saved successfully.');
-    render();
-
-    try {
-      await api(`/v1/vendor/merchant/${state.merchant.id}/profile`, {
+    await performServerAction('update-profile', () => api(`/v1/vendor/merchant/${state.merchant.id}/profile`, {
         method: 'PATCH',
         idempotencyScope: 'vendor-profile',
         body: { businessName, description, contactEmail, contactPhone },
-      });
-    } catch {}
+      }), 'Business profile saved from the live merchant record.');
+    return;
+  }
+
+  // Verification resubmission Form
+  if (form.id === 'verification-submission-form') {
+    const cacNumber = form.elements.cacNumber.value.trim();
+    const tinNumber = form.elements.tinNumber.value.trim();
+    const idType = form.elements.idType.value;
+    const idDocumentUrl = form.elements.idDocumentUrl.value.trim();
+    const utilityBillUrl = form.elements.utilityBillUrl.value.trim();
+
+    if (!cacNumber || !idType || !safeUrl(idDocumentUrl) || !safeUrl(utilityBillUrl)) {
+      state.formError = 'Enter the CAC number, identity type, and valid document URLs.';
+      render();
+      return;
+    }
+    await performServerAction('resubmit-verification', () => api(`/v1/vendor/merchant/${state.merchant.id}/verification`, {
+        method: 'POST',
+        idempotencyScope: 'vendor-verification',
+        body: { cacNumber, tinNumber: tinNumber || undefined, idType, idDocumentUrl, utilityBillUrl },
+      }), 'Updated verification documents submitted for Operations review.');
+    return;
   }
 });
 
 // Boot Sequence
 async function boot() {
   render();
+  await resolveRuntimeConfig();
+  if (state.configurationError || !window.supabase || !hasRuntimeConfig()) {
+    if (!window.supabase && !state.configurationError) {
+      state.configurationError = 'The authentication library did not load. Refresh the page and try again.';
+    }
+    state.loading = false;
+    render();
+    setTimeout(dismissSplash, 900);
+    return;
+  }
 
-  if (window.supabase && config.supabaseUrl && config.supabaseAnonKey) {
-    try {
-      state.client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
-      const { data: { session } } = await state.client.auth.getSession();
-      state.session = session;
+  try {
+    state.client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+    const { data: { session } } = await state.client.auth.getSession();
+    state.session = session;
 
-      state.client.auth.onAuthStateChange((_event, nextSession) => {
-        state.session = nextSession;
-        if (!nextSession) {
-          state.merchants = [];
-          state.merchant = null;
-          state.authMode = 'signin';
-          render();
-        }
-      });
-
-      if (session) {
-        await loadWorkspace();
-      } else {
-        state.loading = false;
+    state.client.auth.onAuthStateChange((_event, nextSession) => {
+      state.session = nextSession;
+      if (!nextSession) {
+        state.dataAbortController?.abort();
+        state.merchants = [];
+        state.merchant = null;
+        state.overview = null;
+        state.products = [];
+        state.orders = [];
+        state.returns = [];
+        state.team = [];
+        state.categories = [];
+        state.authMode = 'signin';
         render();
       }
-    } catch (e) {
-      console.warn('Supabase init error:', e);
+    });
+
+    if (session) {
+      await loadWorkspace();
+    } else {
       state.loading = false;
       render();
     }
-  } else {
+  } catch (error) {
+    state.workspaceError = requestErrorMessage(error, 'The portal could not initialize its live services.');
     state.loading = false;
     render();
   }
