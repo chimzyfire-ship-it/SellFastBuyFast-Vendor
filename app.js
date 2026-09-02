@@ -1,6 +1,6 @@
 /* ==========================================================================
    SellFastBuyFast Merchant Portal — Modern World-Class Architecture
-   Seamless Supabase Auth (Password & Direct Email OTP) + Core API Integration
+   Seamless Supabase Auth + 1-Time Signup OTP Verification + Core API Integration
    ========================================================================== */
 
 const root = document.getElementById('portal-root');
@@ -35,11 +35,11 @@ const state = {
   catalogueFilter: 'all',
   fulfilmentFilter: 'all',
   loading: true,
+  splashActive: true,
   busy: null,
   modal: null,
-  authMode: 'signin', // 'signin' | 'signup' | 'otp-request' | 'verify-otp' | 'recover' | 'onboarding'
+  authMode: 'signin', // 'signin' | 'signup' | 'verify-otp' | 'recover' | 'onboarding'
   pendingEmail: '',
-  pendingOtpType: 'signup', // 'signup' | 'email'
   authError: '',
   formError: '',
   productErrors: {},
@@ -51,13 +51,13 @@ const state = {
 
 const VIEW_TITLES = {
   dashboard: 'Command Center',
-  catalogue: 'Catalogue & Inventory',
+  catalogue: 'Catalogue & Stock',
   'add-product': 'Product Studio',
   fulfilment: 'Fulfilment Queue',
   returns: 'Returns & Disputes',
   payouts: 'Earnings & Settlements',
   profile: 'Business Profile & KYC',
-  team: 'Team & Access',
+  team: 'Team & Staff',
 };
 
 // Helpers & Utilities
@@ -156,7 +156,7 @@ function showNotice(message, type = 'success') {
   showNotice.timer = window.setTimeout(() => {
     state.notice = null;
     render();
-  }, 4800);
+  }, 4500);
 }
 
 function hydrateIcons() {
@@ -171,7 +171,7 @@ function statusBadge(status) {
   let pillClass = 'status-pill-neutral';
   let iconName = 'circle';
 
-  if (['published', 'in transit', 'delivered', 'completed', 'approved', 'received'].includes(norm)) {
+  if (['published', 'in transit', 'delivered', 'completed', 'approved', 'received', 'active'].includes(norm)) {
     pillClass = 'status-pill-success';
     iconName = 'check-circle-2';
   } else if (['pending', 'pending approval', 'payment confirmed', 'processing', 'requested', 'in review'].includes(norm)) {
@@ -185,118 +185,134 @@ function statusBadge(status) {
   return `<span class="status-pill ${pillClass}">${icon(iconName)} ${escapeHtml(norm)}</span>`;
 }
 
-// Render Functions
+/* ==========================================================================
+   RENDER DISPATCHER
+   ========================================================================== */
+
 function render() {
-  if (state.loading && !state.session) {
-    renderLoading();
-    return;
-  }
+  let mainContentHtml = '';
 
   if (!state.session) {
-    renderAuth();
-    return;
+    mainContentHtml = renderAuthHtml();
+  } else if (state.loading && state.merchants.length === 0) {
+    mainContentHtml = renderSkeletonWorkspace();
+  } else if (state.authMode === 'onboarding' || state.merchants.length === 0) {
+    mainContentHtml = renderOnboardingWizardHtml();
+  } else {
+    mainContentHtml = renderShellHtml();
   }
 
-  if (state.loading && state.merchants.length === 0) {
-    renderLoading();
-    return;
-  }
-
-  if (state.authMode === 'onboarding' || state.merchants.length === 0) {
-    renderOnboardingWizard();
-    return;
-  }
-
-  renderShell();
-}
-
-function renderLoading() {
   root.innerHTML = `
-    <div class="boot-screen">
-      <div class="boot-logo-wrapper">
-        <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="boot-logo" />
-      </div>
-      <div class="boot-spinner" aria-hidden="true"></div>
-      <p class="boot-text">Connecting to your verified merchant workspace…</p>
-    </div>`;
+    ${state.splashActive ? renderSplashHtml() : ''}
+    ${mainContentHtml}
+    ${renderModal()}
+    ${renderToastStack()}`;
+
   hydrateIcons();
 }
 
 /* ==========================================================================
-   AUTHENTICATION VIEWS (Sign In, OTP Verification, Sign Up, Recovery)
+   SPLASH SCREEN
    ========================================================================== */
 
-function renderAuth() {
+function renderSplashHtml() {
+  return `
+    <div class="splash-screen ${state.splashActive ? '' : 'fade-out'}" id="app-splash">
+      <div class="splash-brand-card">
+        <div class="splash-logo-wrap">
+          <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="splash-logo" />
+        </div>
+        <div class="splash-progress-track">
+          <div class="splash-progress-bar"></div>
+        </div>
+        <span class="splash-caption">Connecting to verified merchant hub…</span>
+      </div>
+    </div>`;
+}
+
+function dismissSplash() {
+  const splashEl = document.getElementById('app-splash');
+  if (splashEl) {
+    splashEl.classList.add('fade-out');
+  }
+  setTimeout(() => {
+    state.splashActive = false;
+    render();
+  }, 500);
+}
+
+/* ==========================================================================
+   SKELETON LOADERS
+   ========================================================================== */
+
+function renderSkeletonWorkspace() {
+  return `
+    <div class="page-content" style="max-width:1200px;padding-top:40px;">
+      <div class="skeleton skeleton-title"></div>
+      <div class="skeleton" style="height:120px;margin-bottom:24px;border-radius:var(--radius-lg);"></div>
+      <div class="metrics-grid">
+        <div class="skeleton skeleton-card"></div>
+        <div class="skeleton skeleton-card"></div>
+        <div class="skeleton skeleton-card"></div>
+        <div class="skeleton skeleton-card"></div>
+      </div>
+      <div class="card" style="padding:24px;">
+        <div class="skeleton skeleton-title" style="width:25%;"></div>
+        <div class="skeleton skeleton-text" style="width:100%;height:38px;"></div>
+        <div class="skeleton skeleton-text" style="width:100%;height:38px;"></div>
+        <div class="skeleton skeleton-text" style="width:100%;height:38px;"></div>
+      </div>
+    </div>`;
+}
+
+/* ==========================================================================
+   AUTHENTICATION VIEWS (Sign In, 1-Time Signup OTP, Register)
+   ========================================================================== */
+
+function renderAuthHtml() {
   const mode = state.authMode;
   let formHtml = '';
 
   if (mode === 'verify-otp') {
+    // 1-Time OTP Verification Screen after Signup
     formHtml = `
       <form class="auth-box" id="verify-otp-form" novalidate>
-        <h1 class="auth-title">Enter Verification Code</h1>
-        <p class="auth-subtitle">We sent a 6-digit OTP code to <strong style="color:var(--forest-900);">${escapeHtml(state.pendingEmail || 'your email')}</strong></p>
+        <h1 class="auth-title">Verify Your Email</h1>
+        <p class="auth-subtitle">We sent a 6-digit verification code to <strong style="color:var(--forest-900);">${escapeHtml(state.pendingEmail || 'your email')}</strong></p>
 
         ${state.authError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.authError)}</span></div>` : ''}
 
         <div class="form-group">
-          <label class="form-label" for="otp-code" style="justify-content:center;margin-bottom:8px;">6-Digit OTP Code</label>
+          <label class="form-label" for="otp-code" style="justify-content:center;margin-bottom:8px;">Enter 6-Digit Code</label>
           <div style="display:flex;justify-content:center;">
             <input class="input" id="otp-code" name="otpCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="123456" style="font-family:var(--font-display);font-size:24px;letter-spacing:0.35em;text-align:center;font-weight:800;max-width:240px;height:52px;" autofocus required />
           </div>
         </div>
 
         <button class="btn btn-primary btn-full" type="submit" style="margin-top:12px;" ${state.busy === 'verify-otp' ? 'disabled' : ''}>
-          ${state.busy === 'verify-otp' ? 'Verifying Code…' : `${icon('check-circle')} Verify & Open Workspace`}
+          ${state.busy === 'verify-otp' ? 'Verifying Code…' : `${icon('check-circle')} Confirm & Open Dashboard`}
         </button>
 
-        <div class="otp-resend-row">
-          <span>Didn't receive the code?</span>
+        <div class="otp-resend-row" style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:18px;font-size:13.5px;color:var(--ink-muted);">
+          <span>Didn't receive the email?</span>
           <button type="button" class="btn-quiet" data-action="resend-otp" style="font-weight:700;">Resend OTP</button>
         </div>
 
         <div style="text-align:center;margin-top:20px;font-size:13.5px;color:var(--ink-muted);">
-          <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signin">${icon('arrow-left')} Sign In with Password</button>
-        </div>
-      </form>`;
-  } else if (mode === 'otp-request') {
-    formHtml = `
-      <form class="auth-box" id="request-otp-form" novalidate>
-        <div class="auth-segmented-nav">
-          <button type="button" class="auth-segment-tab" data-action="switch-auth-mode" data-mode="signin">Password Sign In</button>
-          <button type="button" class="auth-segment-tab active" data-action="switch-auth-mode" data-mode="otp-request">Email OTP</button>
-        </div>
-
-        <h1 class="auth-title">Sign In with OTP</h1>
-        <p class="auth-subtitle">We will send a one-time 6-digit verification code to your email.</p>
-
-        ${state.authError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.authError)}</span></div>` : ''}
-
-        <div class="form-group">
-          <label class="form-label" for="email">Registered Email</label>
-          <div class="input-wrapper">
-            <span class="input-icon-left">${icon('mail')}</span>
-            <input class="input has-icon-left" id="email" name="email" type="email" autocomplete="email" placeholder="vendor@business.ng" value="${escapeAttribute(state.pendingEmail || '')}" required />
-          </div>
-        </div>
-
-        <button class="btn btn-primary btn-full" type="submit" ${state.busy === 'request-otp' ? 'disabled' : ''}>
-          ${state.busy === 'request-otp' ? 'Sending Code…' : `${icon('send')} Send 6-Digit OTP Code`}
-        </button>
-
-        <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--ink-muted);">
-          New merchant? <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signup" style="font-weight:700;">Create Account</button>
+          <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signin">${icon('arrow-left')} Return to Sign In</button>
         </div>
       </form>`;
   } else if (mode === 'signup') {
+    // Merchant Registration
     formHtml = `
       <form class="auth-box" id="sign-up-form" novalidate>
         <div class="auth-segmented-nav">
-          <button type="button" class="auth-segment-tab" data-action="switch-auth-mode" data-mode="signin">Merchant Sign In</button>
+          <button type="button" class="auth-segment-tab" data-action="switch-auth-mode" data-mode="signin">Sign In</button>
           <button type="button" class="auth-segment-tab active" data-action="switch-auth-mode" data-mode="signup">New Registration</button>
         </div>
 
-        <h1 class="auth-title">Register Merchant</h1>
-        <p class="auth-subtitle">Create your verified merchant account with Supabase Auth.</p>
+        <h1 class="auth-title">Register Store</h1>
+        <p class="auth-subtitle">Create your merchant account. You will verify 1 time via email OTP.</p>
         
         ${state.authError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.authError)}</span></div>` : ''}
 
@@ -343,11 +359,11 @@ function renderAuth() {
 
         <label class="checkbox-row">
           <input type="checkbox" name="terms" required checked />
-          <span>I agree to the <a href="#" target="_blank">SellFastBuyFast Merchant Terms</a> and escrow policy.</span>
+          <span>I agree to the <a href="#" target="_blank">Merchant Agreement</a> & policies.</span>
         </label>
 
         <button class="btn btn-primary btn-full" type="submit" ${state.busy === 'sign-up' ? 'disabled' : ''}>
-          ${state.busy === 'sign-up' ? 'Creating Account…' : `${icon('user-plus')} Create Merchant Account`}
+          ${state.busy === 'sign-up' ? 'Creating Account…' : `${icon('user-plus')} Create Account & Send OTP`}
         </button>
 
         <div style="text-align:center;margin-top:20px;font-size:14px;color:var(--ink-muted);">
@@ -355,10 +371,11 @@ function renderAuth() {
         </div>
       </form>`;
   } else if (mode === 'recover') {
+    // Password Recovery
     formHtml = `
       <form class="auth-box" id="recover-form" novalidate>
         <h1 class="auth-title">Reset Password</h1>
-        <p class="auth-subtitle">Enter your registered email to receive a password reset link.</p>
+        <p class="auth-subtitle">Enter your registered work email to receive a password reset link.</p>
 
         ${state.authError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.authError)}</span></div>` : ''}
 
@@ -375,20 +392,20 @@ function renderAuth() {
         </button>
 
         <div style="text-align:center;margin-top:20px;font-size:14px;color:var(--ink-muted);">
-          Remembered your credentials? <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signin">Return to Sign In</button>
+          Remembered credentials? <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signin">Return to Sign In</button>
         </div>
       </form>`;
   } else {
-    // Sign In (Default)
+    // Standard Sign In (Default)
     formHtml = `
       <form class="auth-box" id="sign-in-form" novalidate>
         <div class="auth-segmented-nav">
-          <button type="button" class="auth-segment-tab active" data-action="switch-auth-mode" data-mode="signin">Password Sign In</button>
-          <button type="button" class="auth-segment-tab" data-action="switch-auth-mode" data-mode="otp-request">Email OTP</button>
+          <button type="button" class="auth-segment-tab active" data-action="switch-auth-mode" data-mode="signin">Merchant Sign In</button>
+          <button type="button" class="auth-segment-tab" data-action="switch-auth-mode" data-mode="signup">New Registration</button>
         </div>
 
         <h1 class="auth-title">Welcome Back</h1>
-        <p class="auth-subtitle">Sign in with Supabase to manage your store and orders.</p>
+        <p class="auth-subtitle">Sign in to manage your inventory, orders, and payouts.</p>
 
         ${state.authError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.authError)}</span></div>` : ''}
 
@@ -421,22 +438,23 @@ function renderAuth() {
           ${state.busy === 'sign-in' ? 'Authenticating…' : `${icon('log-in')} Sign In to Merchant Portal`}
         </button>
 
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px;font-size:13.5px;color:var(--ink-muted);">
-          <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="otp-request">${icon('key-round')} Sign in with OTP</button>
-          <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signup" style="font-weight:700;">New Merchant?</button>
+        <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--ink-muted);">
+          New merchant? <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signup" style="font-weight:700;">Create Account</button>
         </div>
       </form>`;
   }
 
-  root.innerHTML = `
+  return `
     <div class="auth-viewport">
-      <!-- Left Editorial Banner -->
+      <!-- Left Editorial Banner (PC only) -->
       <section class="auth-hero-pane">
         <img src="assets/vendor-abstract-prism.jpg" alt="SellFastBuyFast Enterprise" class="auth-hero-bg" />
         <div class="auth-hero-overlay"></div>
         
         <div class="auth-hero-content">
-          <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="auth-hero-logo" />
+          <div class="auth-brand-badge">
+            <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="auth-brand-logo" />
+          </div>
           <h2 class="auth-hero-headline">Scale Your Business Across <span>Nigeria</span>.</h2>
           <p class="auth-hero-description">The enterprise merchant operating system for rapid inventory management, nationwide courier dispatch, and automated Paystack settlements.</p>
           
@@ -457,37 +475,39 @@ function renderAuth() {
       <section class="auth-form-pane">
         <div class="auth-card-container">
           <div class="mobile-brand-header">
-            <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="mobile-brand-logo" />
+            <div class="mobile-logo-card">
+              <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="mobile-brand-logo" />
+            </div>
           </div>
           ${formHtml}
         </div>
       </section>
-    </div>
-    ${renderToastStack()}`;
-  hydrateIcons();
+    </div>`;
 }
 
 /* ==========================================================================
    ONBOARDING & KYC WIZARD
    ========================================================================== */
 
-function renderOnboardingWizard() {
+function renderOnboardingWizardHtml() {
   const user = state.session?.user;
   const userMeta = user?.user_metadata || {};
   const defaultStore = userMeta.business_name || (user?.email ? user.email.split('@')[0] + ' Store' : 'My Store');
 
-  root.innerHTML = `
-    <div class="page-content" style="max-width:760px;padding-top:48px;">
-      <div style="text-align:center;margin-bottom:36px;">
-        <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" style="height:44px;margin-bottom:16px;" />
+  return `
+    <div class="page-content" style="max-width:760px;padding-top:32px;">
+      <div style="text-align:center;margin-bottom:28px;">
+        <div style="display:inline-flex;padding:8px 18px;background:#fff;border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);margin-bottom:16px;">
+          <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" style="height:38px;" />
+        </div>
         <h1 class="page-title">Merchant Verification & Setup</h1>
-        <p class="page-subtitle">Authenticated as <strong>${escapeHtml(user?.email || 'User')}</strong>. Complete your business setup to activate your dashboard.</p>
+        <p class="page-subtitle">Authenticated as <strong>${escapeHtml(user?.email || 'User')}</strong>. Complete your store setup.</p>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div>
-            <h2 class="card-title">Step 1: Business Identity & Verification</h2>
+            <h2 class="card-title">Business Identity & Verification</h2>
             <p class="card-subtitle">All Nigerian merchants require verification before public store activation.</p>
           </div>
           <span class="status-pill status-pill-warning">${icon('clock')} Setup Pending</span>
@@ -553,7 +573,7 @@ function renderOnboardingWizard() {
             <input class="input" id="onboard-utility" name="utilityBillUrl" type="url" value="https://drive.google.com/file/d/sample-bill" required />
           </div>
 
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px;gap:12px;flex-wrap:wrap;">
             <button type="button" class="btn btn-secondary" data-action="sign-out">${icon('log-out')} Sign Out</button>
             <button type="submit" class="btn btn-primary" ${state.busy === 'submit-onboarding' ? 'disabled' : ''}>
               ${state.busy === 'submit-onboarding' ? 'Activating Store…' : `${icon('check')} Activate Merchant Workspace`}
@@ -561,9 +581,7 @@ function renderOnboardingWizard() {
           </div>
         </form>
       </div>
-    </div>
-    ${renderToastStack()}`;
-  hydrateIcons();
+    </div>`;
 }
 
 /* ==========================================================================
@@ -582,35 +600,27 @@ function navItem(view, iconName, label, badgeCount) {
     </button>`;
 }
 
-function merchantSelectorHtml() {
-  if (state.merchants.length <= 1) return '';
-  return `
-    <select class="select" id="merchant-selector" style="max-width:200px;min-height:38px;padding:6px 12px;font-size:13px;" aria-label="Switch merchant store">
-      ${state.merchants.map((m) => `<option value="${escapeAttribute(m.id)}" ${m.id === state.merchant?.id ? 'selected' : ''}>${escapeHtml(m.businessName)}</option>`).join('')}
-    </select>`;
-}
-
-function renderShell() {
+function renderShellHtml() {
   const overview = state.overview;
   const pendingFulfil = overview ? overview.fulfilment.awaitingAcceptance + overview.fulfilment.awaitingPacking : 0;
   const pendingReturns = overview?.returnRequests.requested ?? 0;
   const verification = overview?.verification?.status ?? 'approved';
 
-  root.innerHTML = `
+  return `
     <div class="portal-shell">
       <!-- Mobile Backdrop -->
       <div class="sidebar-backdrop ${state.sidebarOpen ? 'open' : ''}" data-action="toggle-sidebar"></div>
 
-      <!-- Left Sidebar Navigation -->
+      <!-- Left Sidebar Navigation (Desktop & Mobile Drawer) -->
       <aside class="sidebar ${state.sidebarOpen ? 'open' : ''}">
         <div>
           <div class="sidebar-top">
-            <a href="#" class="sidebar-brand-link" data-action="navigate" data-view="dashboard">
+            <a href="#" class="sidebar-brand-card" data-action="navigate" data-view="dashboard">
               <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="sidebar-logo" />
             </a>
           </div>
 
-          <nav class="sidebar-nav" aria-label="Merchant Portal Navigation">
+          <nav class="sidebar-nav" aria-label="Merchant Navigation">
             <div class="nav-section-label">Operations</div>
             ${navItem('dashboard', 'layout-dashboard', 'Command Center')}
             ${navItem('fulfilment', 'truck', 'Fulfilment Queue', pendingFulfil)}
@@ -643,23 +653,19 @@ function renderShell() {
 
       <!-- Main Workspace -->
       <main class="workspace-pane">
-        <!-- Topbar -->
+        <!-- Responsive Topbar -->
         <header class="topbar">
           <div class="topbar-left">
-            <button class="mobile-menu-btn" type="button" data-action="toggle-sidebar" aria-label="Toggle menu">
+            <button class="mobile-menu-btn" type="button" data-action="toggle-sidebar" aria-label="Toggle navigation">
               ${icon('menu')}
             </button>
             <div class="topbar-title">${escapeHtml(VIEW_TITLES[state.activeView] || 'Overview')}</div>
-            ${merchantSelectorHtml()}
           </div>
 
           <div class="topbar-actions">
             ${statusBadge(verification)}
-            <button class="btn btn-secondary btn-sm" type="button" data-action="refresh-current" title="Refresh Live Data">
-              ${icon('refresh-cw')} <span style="display:none;@media(min-width:640px){display:inline}">Refresh</span>
-            </button>
             <button class="btn btn-primary btn-sm" type="button" data-action="navigate" data-view="add-product">
-              ${icon('plus')} <span>New Product</span>
+              ${icon('plus')} <span style="display:none;@media(min-width:640px){display:inline}">New Product</span>
             </button>
           </div>
         </header>
@@ -669,10 +675,7 @@ function renderShell() {
           ${renderCurrentView()}
         </div>
       </main>
-    </div>
-    ${renderModal()}
-    ${renderToastStack()}`;
-  hydrateIcons();
+    </div>`;
 }
 
 function renderToastStack() {
@@ -705,7 +708,7 @@ function renderCurrentView() {
 
 function renderDashboardView() {
   const overview = state.overview;
-  if (!overview) return '<div class="empty-state"><div class="boot-spinner"></div></div>';
+  if (!overview) return renderSkeletonWorkspace();
 
   const pendingCount = overview.fulfilment.awaitingAcceptance + overview.fulfilment.awaitingPacking;
   const urgentOrders = state.orders.filter((o) => ['payment_confirmed', 'processing'].includes(o.status)).slice(0, 6);
@@ -998,9 +1001,9 @@ function renderOrdersTable(orderList, concise = false) {
     } else if (order.status === 'processing' && order.shipment?.status === 'pending') {
       actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="pack-order" data-order-id="${escapeAttribute(order.id)}">${icon('box')} Mark Packed</button>`;
     } else if (order.status === 'processing' && order.shipment?.status === 'packed') {
-      actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="ship-order" data-order-id="${escapeAttribute(order.id)}" data-order-number="${escapeAttribute(order.orderNumber)}">${icon('send')} Dispatch / Waybill</button>`;
+      actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="ship-order" data-order-id="${escapeAttribute(order.id)}" data-order-number="${escapeAttribute(order.orderNumber)}">${icon('send')} Dispatch</button>`;
     } else if (order.status === 'in_transit') {
-      actionBtn = `<span style="font-size:12.5px;color:var(--forest-700);font-weight:700;">${icon('truck')} In Transit (${escapeHtml(order.shipment?.trackingCode || 'Tracked')})</span>`;
+      actionBtn = `<span style="font-size:12.5px;color:var(--forest-700);font-weight:700;">${icon('truck')} In Transit</span>`;
     } else {
       actionBtn = `<span class="table-sub-text">Completed</span>`;
     }
@@ -1139,10 +1142,10 @@ function renderPayoutsView() {
           <span class="status-pill status-pill-success">${icon('shield-check')} Verified Account</span>
         </div>
         <div class="card-body">
-          <div style="font-family:var(--font-display);font-size:36px;font-weight:800;color:var(--forest-900);margin-bottom:12px;">
+          <div style="font-family:var(--font-display);font-size:32px;font-weight:800;color:var(--forest-900);margin-bottom:12px;">
             ₦ 1,450,000.00
           </div>
-          <p style="font-size:14px;color:var(--ink-muted);line-height:1.6;margin-bottom:20px;">
+          <p style="font-size:13.5px;color:var(--ink-muted);line-height:1.6;margin-bottom:20px;">
             All settlements are reconciled against verified Paystack transfers and logged with immutable double-entry journal records.
           </p>
           <button class="btn btn-secondary" type="button" disabled style="opacity:0.8;">
@@ -1160,7 +1163,7 @@ function renderPayoutsView() {
           <span class="status-pill status-pill-neutral">${icon('info')} Notice</span>
         </div>
         <div class="card-body">
-          <p style="font-size:14px;color:var(--ink-secondary);line-height:1.6;margin-bottom:14px;">
+          <p style="font-size:13.5px;color:var(--ink-secondary);line-height:1.6;margin-bottom:14px;">
             Settlement balances and bank-recipient setup are operational on the backend. Live provider webhook dispatches run in verified sandbox mode until launch.
           </p>
           <div style="background:var(--page-subtle);padding:14px;border-radius:var(--radius-sm);font-size:13px;color:var(--ink-muted);">
@@ -1240,7 +1243,7 @@ function renderProfileView() {
         <div class="card-body">
           <div style="background:var(--page-subtle);padding:18px;border-radius:var(--radius-md);border:1px solid var(--border-light);margin-bottom:20px;">
             <div style="font-weight:700;margin-bottom:4px;color:var(--forest-900);">Compliance Level 1: Fully Verified</div>
-            <p style="font-size:13.5px;color:var(--ink-muted);line-height:1.5;">
+            <p style="font-size:13px;color:var(--ink-muted);line-height:1.5;">
               Your business CAC, Director ID, and warehouse proof of address have been approved.
             </p>
           </div>
@@ -1251,7 +1254,7 @@ function renderProfileView() {
 }
 
 /* ==========================================================================
-   VIEW 8: TEAM & ACCESS
+   VIEW 8: TEAM & STAFF
    ========================================================================== */
 
 function renderTeamView() {
@@ -1518,7 +1521,7 @@ function initializeFallbackWorkspace(user) {
   ];
 
   state.team = [
-    { fullName: user?.user_metadata?.full_name || 'Store Owner', email: user?.email || 'owner@sellfastbuyfast.com', role: 'Owner', createdAt: new Date() },
+    { fullName: user?.user_metadata?.full_name || 'Chimzy Charles', email: user?.email || 'chimzycharles001@gmail.com', role: 'Owner', createdAt: new Date() },
     { fullName: 'Operations Associate', email: 'dispatch@sellfastbuyfast.com', role: 'Staff', createdAt: new Date(Date.now() - 2592000000) },
   ];
 }
@@ -1551,7 +1554,7 @@ async function loadMerchantData() {
     if (team.status === 'fulfilled') state.team = team.value;
     if (categories.status === 'fulfilled') state.categories = categories.value;
   } catch {
-    // If Core API is in offline/fallback mode, keep state
+    // Keep local synthesis if backend is in sandbox mode
   }
 
   state.loading = false;
@@ -1568,7 +1571,6 @@ async function loadWorkspace() {
     state.merchant = state.merchants.find((m) => m.id === savedId) || state.merchants[0] || null;
 
     if (!state.merchant) {
-      // Prompt onboarding if no merchant exists
       state.authMode = 'onboarding';
       state.loading = false;
       render();
@@ -1577,7 +1579,6 @@ async function loadWorkspace() {
 
     await loadMerchantData();
   } catch {
-    // Graceful fallback to client workspace when Core API is offline
     initializeFallbackWorkspace(state.session?.user);
     state.loading = false;
     render();
@@ -1615,19 +1616,19 @@ document.addEventListener('click', async (event) => {
 
   if (action === 'resend-otp') {
     if (!state.pendingEmail) {
-      state.authMode = 'otp-request';
+      state.authMode = 'signup';
       render();
       return;
     }
     state.busy = 'resend-otp';
     render();
     try {
-      const { error } = await state.client.auth.signInWithOtp({
+      const { error } = await state.client.auth.resend({
+        type: 'signup',
         email: state.pendingEmail,
-        options: { shouldCreateUser: false },
       });
       if (error) throw new Error(error.message);
-      showNotice(`A new 6-digit OTP code was sent to ${state.pendingEmail}`);
+      showNotice(`A fresh 6-digit OTP code was sent to ${state.pendingEmail}`);
     } catch (e) {
       showNotice(e.message || 'Could not resend OTP.', 'error');
     } finally {
@@ -1768,20 +1769,6 @@ document.addEventListener('input', (event) => {
   });
 });
 
-// Store switcher
-document.addEventListener('change', async (event) => {
-  if (event.target.id === 'merchant-selector') {
-    const selectedId = event.target.value;
-    const target = state.merchants.find((m) => m.id === selectedId);
-    if (target) {
-      state.merchant = target;
-      window.localStorage.setItem('sfbf-vendor-merchant-id', target.id);
-      await loadMerchantData();
-      showNotice(`Switched to ${target.businessName}`);
-    }
-  }
-});
-
 // Form Submissions
 document.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1815,40 +1802,7 @@ document.addEventListener('submit', async (event) => {
     return;
   }
 
-  // Request Email OTP Form
-  if (form.id === 'request-otp-form') {
-    const email = form.elements.email.value.trim();
-    if (!email) {
-      state.authError = 'Please enter your registered email.';
-      render();
-      return;
-    }
-
-    state.busy = 'request-otp';
-    state.authError = '';
-    state.pendingEmail = email;
-    state.pendingOtpType = 'email';
-    render();
-
-    try {
-      const { error } = await state.client.auth.signInWithOtp({
-        email,
-        options: { shouldCreateUser: true },
-      });
-      if (error) throw new Error(error.message);
-
-      state.authMode = 'verify-otp';
-      showNotice(`6-digit code sent to ${email}`);
-    } catch (err) {
-      state.authError = err.message || 'Could not send OTP.';
-    } finally {
-      state.busy = null;
-      render();
-    }
-    return;
-  }
-
-  // Verify OTP Form
+  // 1-Time Signup OTP Verification Form
   if (form.id === 'verify-otp-form') {
     const token = form.elements.otpCode.value.trim();
     if (!token || token.length < 6) {
@@ -1862,11 +1816,10 @@ document.addEventListener('submit', async (event) => {
     render();
 
     try {
-      // Attempt verification with signup type first, fallback to email type
       let res = await state.client.auth.verifyOtp({
         email: state.pendingEmail,
         token,
-        type: state.pendingOtpType || 'signup',
+        type: 'signup',
       });
 
       if (res.error) {
@@ -1882,7 +1835,7 @@ document.addEventListener('submit', async (event) => {
       }
 
       state.session = res.data.session;
-      showNotice('OTP verified! Opening your merchant workspace…');
+      showNotice('Email verified! Opening your merchant workspace…');
       await loadWorkspace();
     } catch (err) {
       state.authError = err.message || 'Verification failed. Check the 6-digit code.';
@@ -1893,7 +1846,7 @@ document.addEventListener('submit', async (event) => {
     return;
   }
 
-  // Sign Up Form (Creates user & sends OTP code)
+  // Sign Up Form (Captures details and sends 1-time OTP)
   if (form.id === 'sign-up-form') {
     const email = form.elements.email.value.trim();
     const password = form.elements.password.value;
@@ -1910,7 +1863,6 @@ document.addEventListener('submit', async (event) => {
     state.busy = 'sign-up';
     state.authError = '';
     state.pendingEmail = email;
-    state.pendingOtpType = 'signup';
     render();
 
     try {
@@ -1928,9 +1880,9 @@ document.addEventListener('submit', async (event) => {
         showNotice('Merchant account created successfully!');
         await loadWorkspace();
       } else {
-        // Direct transition to 6-digit OTP entry screen!
+        // Direct transition to the 1-time OTP verification screen
         state.authMode = 'verify-otp';
-        showNotice(`Account registered! Enter the 6-digit OTP code sent to ${email}`);
+        showNotice(`Account registered! Enter the 6-digit code sent to ${email}`);
         render();
       }
     } catch (err) {
@@ -1938,6 +1890,30 @@ document.addEventListener('submit', async (event) => {
       render();
     } finally {
       state.busy = null;
+    }
+    return;
+  }
+
+  // Password Recovery Form
+  if (form.id === 'recover-form') {
+    const email = form.elements.email.value.trim();
+    if (!email) {
+      state.authError = 'Please enter your account email.';
+      render();
+      return;
+    }
+    state.busy = 'recover';
+    render();
+    try {
+      const { error } = await state.client.auth.resetPasswordForEmail(email);
+      if (error) throw new Error(error.message);
+      showNotice('Password reset link sent to your email!');
+      state.authMode = 'signin';
+    } catch (err) {
+      state.authError = err.message || 'Could not send reset link.';
+    } finally {
+      state.busy = null;
+      render();
     }
     return;
   }
@@ -2136,6 +2112,8 @@ document.addEventListener('submit', async (event) => {
 
 // Boot Sequence
 async function boot() {
+  render(); // Renders splash screen immediately
+
   if (window.supabase && config.supabaseUrl && config.supabaseAnonKey) {
     try {
       state.client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
@@ -2159,7 +2137,7 @@ async function boot() {
         render();
       }
     } catch (e) {
-      console.warn('Supabase initialization error:', e);
+      console.warn('Supabase init error:', e);
       state.loading = false;
       render();
     }
@@ -2167,6 +2145,9 @@ async function boot() {
     state.loading = false;
     render();
   }
+
+  // Smooth dismiss of the branded beige splash screen
+  setTimeout(dismissSplash, 900);
 }
 
 boot();
