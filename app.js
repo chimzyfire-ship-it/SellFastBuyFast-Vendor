@@ -1,6 +1,6 @@
 /* ==========================================================================
    SellFastBuyFast Merchant Portal — Modern World-Class Architecture
-   Seamless Supabase Auth + Verified Core REST API Integration
+   Seamless Supabase Auth (Password & Direct Email OTP) + Core API Integration
    ========================================================================== */
 
 const root = document.getElementById('portal-root');
@@ -37,7 +37,9 @@ const state = {
   loading: true,
   busy: null,
   modal: null,
-  authMode: 'signin', // 'signin' | 'signup' | 'recover' | 'onboarding'
+  authMode: 'signin', // 'signin' | 'signup' | 'otp-request' | 'verify-otp' | 'recover' | 'onboarding'
+  pendingEmail: '',
+  pendingOtpType: 'signup', // 'signup' | 'email'
   authError: '',
   formError: '',
   productErrors: {},
@@ -221,14 +223,71 @@ function renderLoading() {
 }
 
 /* ==========================================================================
-   AUTHENTICATION VIEWS (Sign In, Sign Up, Password Recovery)
+   AUTHENTICATION VIEWS (Sign In, OTP Verification, Sign Up, Recovery)
    ========================================================================== */
 
 function renderAuth() {
   const mode = state.authMode;
   let formHtml = '';
 
-  if (mode === 'signup') {
+  if (mode === 'verify-otp') {
+    formHtml = `
+      <form class="auth-box" id="verify-otp-form" novalidate>
+        <h1 class="auth-title">Enter Verification Code</h1>
+        <p class="auth-subtitle">We sent a 6-digit OTP code to <strong style="color:var(--forest-900);">${escapeHtml(state.pendingEmail || 'your email')}</strong></p>
+
+        ${state.authError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.authError)}</span></div>` : ''}
+
+        <div class="form-group">
+          <label class="form-label" for="otp-code" style="justify-content:center;margin-bottom:8px;">6-Digit OTP Code</label>
+          <div style="display:flex;justify-content:center;">
+            <input class="input" id="otp-code" name="otpCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="123456" style="font-family:var(--font-display);font-size:24px;letter-spacing:0.35em;text-align:center;font-weight:800;max-width:240px;height:52px;" autofocus required />
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-full" type="submit" style="margin-top:12px;" ${state.busy === 'verify-otp' ? 'disabled' : ''}>
+          ${state.busy === 'verify-otp' ? 'Verifying Code…' : `${icon('check-circle')} Verify & Open Workspace`}
+        </button>
+
+        <div class="otp-resend-row">
+          <span>Didn't receive the code?</span>
+          <button type="button" class="btn-quiet" data-action="resend-otp" style="font-weight:700;">Resend OTP</button>
+        </div>
+
+        <div style="text-align:center;margin-top:20px;font-size:13.5px;color:var(--ink-muted);">
+          <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signin">${icon('arrow-left')} Sign In with Password</button>
+        </div>
+      </form>`;
+  } else if (mode === 'otp-request') {
+    formHtml = `
+      <form class="auth-box" id="request-otp-form" novalidate>
+        <div class="auth-segmented-nav">
+          <button type="button" class="auth-segment-tab" data-action="switch-auth-mode" data-mode="signin">Password Sign In</button>
+          <button type="button" class="auth-segment-tab active" data-action="switch-auth-mode" data-mode="otp-request">Email OTP</button>
+        </div>
+
+        <h1 class="auth-title">Sign In with OTP</h1>
+        <p class="auth-subtitle">We will send a one-time 6-digit verification code to your email.</p>
+
+        ${state.authError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.authError)}</span></div>` : ''}
+
+        <div class="form-group">
+          <label class="form-label" for="email">Registered Email</label>
+          <div class="input-wrapper">
+            <span class="input-icon-left">${icon('mail')}</span>
+            <input class="input has-icon-left" id="email" name="email" type="email" autocomplete="email" placeholder="vendor@business.ng" value="${escapeAttribute(state.pendingEmail || '')}" required />
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-full" type="submit" ${state.busy === 'request-otp' ? 'disabled' : ''}>
+          ${state.busy === 'request-otp' ? 'Sending Code…' : `${icon('send')} Send 6-Digit OTP Code`}
+        </button>
+
+        <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--ink-muted);">
+          New merchant? <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signup" style="font-weight:700;">Create Account</button>
+        </div>
+      </form>`;
+  } else if (mode === 'signup') {
     formHtml = `
       <form class="auth-box" id="sign-up-form" novalidate>
         <div class="auth-segmented-nav">
@@ -324,8 +383,8 @@ function renderAuth() {
     formHtml = `
       <form class="auth-box" id="sign-in-form" novalidate>
         <div class="auth-segmented-nav">
-          <button type="button" class="auth-segment-tab active" data-action="switch-auth-mode" data-mode="signin">Merchant Sign In</button>
-          <button type="button" class="auth-segment-tab" data-action="switch-auth-mode" data-mode="signup">New Registration</button>
+          <button type="button" class="auth-segment-tab active" data-action="switch-auth-mode" data-mode="signin">Password Sign In</button>
+          <button type="button" class="auth-segment-tab" data-action="switch-auth-mode" data-mode="otp-request">Email OTP</button>
         </div>
 
         <h1 class="auth-title">Welcome Back</h1>
@@ -337,7 +396,7 @@ function renderAuth() {
           <label class="form-label" for="email">Work Email</label>
           <div class="input-wrapper">
             <span class="input-icon-left">${icon('mail')}</span>
-            <input class="input has-icon-left" id="email" name="email" type="email" autocomplete="email" placeholder="vendor@business.ng" required />
+            <input class="input has-icon-left" id="email" name="email" type="email" autocomplete="email" placeholder="vendor@business.ng" value="${escapeAttribute(state.pendingEmail || '')}" required />
           </div>
         </div>
 
@@ -362,8 +421,9 @@ function renderAuth() {
           ${state.busy === 'sign-in' ? 'Authenticating…' : `${icon('log-in')} Sign In to Merchant Portal`}
         </button>
 
-        <div style="text-align:center;margin-top:24px;font-size:13.5px;color:var(--ink-muted);">
-          New merchant? <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signup" style="font-weight:700;">Create Account</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px;font-size:13.5px;color:var(--ink-muted);">
+          <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="otp-request">${icon('key-round')} Sign in with OTP</button>
+          <button type="button" class="btn-quiet" data-action="switch-auth-mode" data-mode="signup" style="font-weight:700;">New Merchant?</button>
         </div>
       </form>`;
   }
@@ -1553,6 +1613,30 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
+  if (action === 'resend-otp') {
+    if (!state.pendingEmail) {
+      state.authMode = 'otp-request';
+      render();
+      return;
+    }
+    state.busy = 'resend-otp';
+    render();
+    try {
+      const { error } = await state.client.auth.signInWithOtp({
+        email: state.pendingEmail,
+        options: { shouldCreateUser: false },
+      });
+      if (error) throw new Error(error.message);
+      showNotice(`A new 6-digit OTP code was sent to ${state.pendingEmail}`);
+    } catch (e) {
+      showNotice(e.message || 'Could not resend OTP.', 'error');
+    } finally {
+      state.busy = null;
+      render();
+    }
+    return;
+  }
+
   if (action === 'navigate') {
     state.activeView = button.dataset.view || 'dashboard';
     state.sidebarOpen = false;
@@ -1703,7 +1787,7 @@ document.addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.target;
 
-  // Sign In Form
+  // Sign In Form (Password)
   if (form.id === 'sign-in-form') {
     const email = form.elements.email.value.trim();
     const password = form.elements.password.value;
@@ -1731,7 +1815,85 @@ document.addEventListener('submit', async (event) => {
     return;
   }
 
-  // Sign Up Form
+  // Request Email OTP Form
+  if (form.id === 'request-otp-form') {
+    const email = form.elements.email.value.trim();
+    if (!email) {
+      state.authError = 'Please enter your registered email.';
+      render();
+      return;
+    }
+
+    state.busy = 'request-otp';
+    state.authError = '';
+    state.pendingEmail = email;
+    state.pendingOtpType = 'email';
+    render();
+
+    try {
+      const { error } = await state.client.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: true },
+      });
+      if (error) throw new Error(error.message);
+
+      state.authMode = 'verify-otp';
+      showNotice(`6-digit code sent to ${email}`);
+    } catch (err) {
+      state.authError = err.message || 'Could not send OTP.';
+    } finally {
+      state.busy = null;
+      render();
+    }
+    return;
+  }
+
+  // Verify OTP Form
+  if (form.id === 'verify-otp-form') {
+    const token = form.elements.otpCode.value.trim();
+    if (!token || token.length < 6) {
+      state.authError = 'Please enter the 6-digit OTP code sent to your email.';
+      render();
+      return;
+    }
+
+    state.busy = 'verify-otp';
+    state.authError = '';
+    render();
+
+    try {
+      // Attempt verification with signup type first, fallback to email type
+      let res = await state.client.auth.verifyOtp({
+        email: state.pendingEmail,
+        token,
+        type: state.pendingOtpType || 'signup',
+      });
+
+      if (res.error) {
+        res = await state.client.auth.verifyOtp({
+          email: state.pendingEmail,
+          token,
+          type: 'email',
+        });
+      }
+
+      if (res.error || !res.data?.session) {
+        throw new Error(res.error?.message || 'Invalid or expired OTP code.');
+      }
+
+      state.session = res.data.session;
+      showNotice('OTP verified! Opening your merchant workspace…');
+      await loadWorkspace();
+    } catch (err) {
+      state.authError = err.message || 'Verification failed. Check the 6-digit code.';
+      render();
+    } finally {
+      state.busy = null;
+    }
+    return;
+  }
+
+  // Sign Up Form (Creates user & sends OTP code)
   if (form.id === 'sign-up-form') {
     const email = form.elements.email.value.trim();
     const password = form.elements.password.value;
@@ -1747,6 +1909,8 @@ document.addEventListener('submit', async (event) => {
 
     state.busy = 'sign-up';
     state.authError = '';
+    state.pendingEmail = email;
+    state.pendingOtpType = 'signup';
     render();
 
     try {
@@ -1764,10 +1928,9 @@ document.addEventListener('submit', async (event) => {
         showNotice('Merchant account created successfully!');
         await loadWorkspace();
       } else {
-        // If Supabase sends confirmation email
-        state.authError = '';
-        state.authMode = 'signin';
-        showNotice('Account registered! Please sign in with your credentials.');
+        // Direct transition to 6-digit OTP entry screen!
+        state.authMode = 'verify-otp';
+        showNotice(`Account registered! Enter the 6-digit OTP code sent to ${email}`);
         render();
       }
     } catch (err) {

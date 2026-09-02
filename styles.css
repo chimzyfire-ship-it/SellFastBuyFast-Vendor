@@ -1374,3 +1374,49 @@ i[data-lucide] {
     grid-template-columns: 1.2fr 1fr;
   }
 }
+
+/* OTP Input Boxes */
+.otp-container {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 24px 0;
+}
+
+.otp-input {
+  width: 48px;
+  height: 54px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--border-medium);
+  background: var(--surface);
+  color: var(--ink-primary);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 800;
+  text-align: center;
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+.otp-input:focus {
+  border-color: var(--forest-700);
+  box-shadow: 0 0 0 3px rgba(10, 82, 67, 0.15);
+  background: #ffffff;
+}
+
+.otp-help-text {
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--ink-muted);
+  margin-bottom: 20px;
+}
+
+.otp-resend-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 13.5px;
+  color: var(--ink-muted);
+}
