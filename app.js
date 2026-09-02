@@ -274,7 +274,6 @@ function renderAuthHtml() {
   let formHtml = '';
 
   if (mode === 'verify-otp') {
-    // 1-Time OTP Verification Screen after Signup
     formHtml = `
       <form class="auth-box" id="verify-otp-form" novalidate>
         <h1 class="auth-title">Verify Your Email</h1>
@@ -303,7 +302,6 @@ function renderAuthHtml() {
         </div>
       </form>`;
   } else if (mode === 'signup') {
-    // Merchant Registration
     formHtml = `
       <form class="auth-box" id="sign-up-form" novalidate>
         <div class="auth-segmented-nav">
@@ -371,7 +369,6 @@ function renderAuthHtml() {
         </div>
       </form>`;
   } else if (mode === 'recover') {
-    // Password Recovery
     formHtml = `
       <form class="auth-box" id="recover-form" novalidate>
         <h1 class="auth-title">Reset Password</h1>
@@ -396,7 +393,7 @@ function renderAuthHtml() {
         </div>
       </form>`;
   } else {
-    // Standard Sign In (Default)
+    // Standard Sign In
     formHtml = `
       <form class="auth-box" id="sign-in-form" novalidate>
         <div class="auth-segmented-nav">
@@ -446,14 +443,14 @@ function renderAuthHtml() {
 
   return `
     <div class="auth-viewport">
-      <!-- Left Editorial Banner with Zoomed Receipt Macro & Floating Large Logo -->
+      <!-- Left Editorial Banner with Zoomed Receipt Macro & High-Contrast White/Gold Floating Logo -->
       <section class="auth-hero-pane">
         <img src="assets/vendor-receipt-macro.jpg" alt="SellFastBuyFast Enterprise" class="auth-hero-bg" />
         <div class="auth-hero-overlay"></div>
         
         <div class="auth-hero-content">
           <div class="auth-floating-logo-wrap">
-            <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="auth-floating-logo" />
+            <img src="assets/sellfastbuyfast-logo-white.png" alt="SellFastBuyFast" class="auth-floating-logo" />
           </div>
           <h2 class="auth-hero-headline">Scale Your Business Across <span>Nigeria</span>.</h2>
           <p class="auth-hero-description">The enterprise merchant operating system for rapid inventory management, nationwide courier dispatch, and automated Paystack settlements.</p>
@@ -475,7 +472,7 @@ function renderAuthHtml() {
       <section class="auth-form-pane">
         <div class="auth-card-container">
           <div class="mobile-brand-header">
-            <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="mobile-floating-logo" />
+            <img src="assets/sellfastbuyfast-logo-white.png" alt="SellFastBuyFast" class="mobile-floating-logo" />
           </div>
           ${formHtml}
         </div>
@@ -609,12 +606,12 @@ function renderShellHtml() {
       <!-- Mobile Backdrop -->
       <div class="sidebar-backdrop ${state.sidebarOpen ? 'open' : ''}" data-action="toggle-sidebar"></div>
 
-      <!-- Left Sidebar Navigation (Desktop & Mobile Drawer) -->
+      <!-- Left Sidebar Navigation with White/Gold Floating Logo on Dark Green -->
       <aside class="sidebar ${state.sidebarOpen ? 'open' : ''}">
         <div>
           <div class="sidebar-top">
             <a href="#" class="sidebar-floating-brand" data-action="navigate" data-view="dashboard">
-              <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="sidebar-floating-logo" />
+              <img src="assets/sellfastbuyfast-logo-white.png" alt="SellFastBuyFast" class="sidebar-floating-logo" />
             </a>
           </div>
 
@@ -1552,7 +1549,7 @@ async function loadMerchantData() {
     if (team.status === 'fulfilled') state.team = team.value;
     if (categories.status === 'fulfilled') state.categories = categories.value;
   } catch {
-    // Keep local fallback if Core API is in sandbox mode
+    // Keep local synthesis
   }
 
   state.loading = false;
@@ -1878,7 +1875,6 @@ document.addEventListener('submit', async (event) => {
         showNotice('Merchant account created successfully!');
         await loadWorkspace();
       } else {
-        // Direct transition to the 1-time OTP verification screen
         state.authMode = 'verify-otp';
         showNotice(`Account registered! Enter the 6-digit code sent to ${email}`);
         render();
@@ -2110,7 +2106,7 @@ document.addEventListener('submit', async (event) => {
 
 // Boot Sequence
 async function boot() {
-  render(); // Renders splash screen immediately
+  render();
 
   if (window.supabase && config.supabaseUrl && config.supabaseAnonKey) {
     try {
