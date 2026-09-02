@@ -219,8 +219,8 @@ function renderSplashHtml() {
   return `
     <div class="splash-screen ${state.splashActive ? '' : 'fade-out'}" id="app-splash">
       <div class="splash-brand-card">
-        <div class="splash-logo-wrap">
-          <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="splash-logo" />
+        <div class="splash-floating-logo-wrap">
+          <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="splash-floating-logo" />
         </div>
         <div class="splash-progress-track">
           <div class="splash-progress-bar"></div>
@@ -285,7 +285,7 @@ function renderAuthHtml() {
         <div class="form-group">
           <label class="form-label" for="otp-code" style="justify-content:center;margin-bottom:8px;">Enter 6-Digit Code</label>
           <div style="display:flex;justify-content:center;">
-            <input class="input" id="otp-code" name="otpCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="123456" style="font-family:var(--font-display);font-size:24px;letter-spacing:0.35em;text-align:center;font-weight:800;max-width:240px;height:52px;" autofocus required />
+            <input class="input" id="otp-code" name="otpCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="123456" style="font-family:var(--font-numbers);font-size:24px;letter-spacing:0.35em;text-align:center;font-weight:800;max-width:240px;height:52px;" autofocus required />
           </div>
         </div>
 
@@ -446,14 +446,14 @@ function renderAuthHtml() {
 
   return `
     <div class="auth-viewport">
-      <!-- Left Editorial Banner (PC only) -->
+      <!-- Left Editorial Banner with Zoomed Receipt Macro & Floating Large Logo -->
       <section class="auth-hero-pane">
-        <img src="assets/vendor-abstract-prism.jpg" alt="SellFastBuyFast Enterprise" class="auth-hero-bg" />
+        <img src="assets/vendor-receipt-macro.jpg" alt="SellFastBuyFast Enterprise" class="auth-hero-bg" />
         <div class="auth-hero-overlay"></div>
         
         <div class="auth-hero-content">
-          <div class="auth-brand-badge">
-            <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="auth-brand-logo" />
+          <div class="auth-floating-logo-wrap">
+            <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="auth-floating-logo" />
           </div>
           <h2 class="auth-hero-headline">Scale Your Business Across <span>Nigeria</span>.</h2>
           <p class="auth-hero-description">The enterprise merchant operating system for rapid inventory management, nationwide courier dispatch, and automated Paystack settlements.</p>
@@ -475,9 +475,7 @@ function renderAuthHtml() {
       <section class="auth-form-pane">
         <div class="auth-card-container">
           <div class="mobile-brand-header">
-            <div class="mobile-logo-card">
-              <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="mobile-brand-logo" />
-            </div>
+            <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="mobile-floating-logo" />
           </div>
           ${formHtml}
         </div>
@@ -497,8 +495,8 @@ function renderOnboardingWizardHtml() {
   return `
     <div class="page-content" style="max-width:760px;padding-top:32px;">
       <div style="text-align:center;margin-bottom:28px;">
-        <div style="display:inline-flex;padding:8px 18px;background:#fff;border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);margin-bottom:16px;">
-          <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" style="height:38px;" />
+        <div style="display:inline-flex;margin-bottom:16px;">
+          <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" style="height:48px;" />
         </div>
         <h1 class="page-title">Merchant Verification & Setup</h1>
         <p class="page-subtitle">Authenticated as <strong>${escapeHtml(user?.email || 'User')}</strong>. Complete your store setup.</p>
@@ -615,8 +613,8 @@ function renderShellHtml() {
       <aside class="sidebar ${state.sidebarOpen ? 'open' : ''}">
         <div>
           <div class="sidebar-top">
-            <a href="#" class="sidebar-brand-card" data-action="navigate" data-view="dashboard">
-              <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="sidebar-logo" />
+            <a href="#" class="sidebar-floating-brand" data-action="navigate" data-view="dashboard">
+              <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="sidebar-floating-logo" />
             </a>
           </div>
 
@@ -716,7 +714,7 @@ function renderDashboardView() {
   return `
     <!-- Top Ambient Banner -->
     <div class="ambient-banner-card">
-      <img src="assets/vendor-abstract-flow.jpg" alt="Ambient Mesh" class="ambient-banner-bg" />
+      <img src="assets/vendor-receipt-macro.jpg" alt="Ambient Mesh" class="ambient-banner-bg" />
       <div class="ambient-banner-content">
         <h2 class="ambient-banner-title">Welcome back, ${escapeHtml(state.merchant?.businessName || 'Partner')}</h2>
         <p class="ambient-banner-text">Here is your verified store performance for today. You have <strong>${pendingCount} orders</strong> ready for fulfilment.</p>
@@ -1142,7 +1140,7 @@ function renderPayoutsView() {
           <span class="status-pill status-pill-success">${icon('shield-check')} Verified Account</span>
         </div>
         <div class="card-body">
-          <div style="font-family:var(--font-display);font-size:32px;font-weight:800;color:var(--forest-900);margin-bottom:12px;">
+          <div style="font-family:var(--font-numbers);font-size:32px;font-weight:800;color:var(--forest-900);margin-bottom:12px;">
             ₦ 1,450,000.00
           </div>
           <p style="font-size:13.5px;color:var(--ink-muted);line-height:1.6;margin-bottom:20px;">
@@ -1424,11 +1422,11 @@ function renderModal() {
    ========================================================================== */
 
 function initializeFallbackWorkspace(user) {
-  const storeName = user?.user_metadata?.business_name || (user?.email ? user.email.split('@')[0].toUpperCase() + ' Official Store' : 'Shoplancia Luxury Store');
+  const storeName = user?.user_metadata?.business_name || (user?.email ? user.email.split('@')[0].toUpperCase() + ' Official Store' : 'SellFastBuyFast Luxury Store');
 
   state.merchants = [{
     id: 'm-default',
-    slug: 'shoplancia-official',
+    slug: 'sfbf-official-store',
     businessName: storeName,
     description: 'Verified Nigerian merchant specializing in authentic luxury fashion, electronics, and lifestyle goods.',
     contactEmail: user?.email || 'store@sellfastbuyfast.com',
@@ -1554,7 +1552,7 @@ async function loadMerchantData() {
     if (team.status === 'fulfilled') state.team = team.value;
     if (categories.status === 'fulfilled') state.categories = categories.value;
   } catch {
-    // Keep local synthesis if backend is in sandbox mode
+    // Keep local fallback if Core API is in sandbox mode
   }
 
   state.loading = false;

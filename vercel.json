@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "name": "shoplancia-vendor-portal",
+  "name": "sellfastbuyfast-vendor-portal",
   "cleanUrls": true,
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }

@@ -8,7 +8,7 @@
     <meta name="description" content="Manage catalogue, stock, order fulfilment, verification, and settlement operations on SellFastBuyFast." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Manrope:wght@500;600;700;800&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
     <script src="config.js" onerror="console.warn('config.js not found, fallback active.')"></script>
     <script defer src="https://unpkg.com/lucide@0.468.0"></script>
@@ -17,12 +17,16 @@
   </head>
   <body>
     <main id="portal-root" aria-live="polite" aria-busy="true">
-      <div class="boot-screen">
-        <div class="boot-logo-wrapper">
-          <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="boot-logo" onerror="this.style.display='none'" />
+      <div class="splash-screen" id="app-splash">
+        <div class="splash-brand-card">
+          <div class="splash-floating-logo-wrap">
+            <img src="assets/sellfastbuyfast-logo.png" alt="SellFastBuyFast" class="splash-floating-logo" />
+          </div>
+          <div class="splash-progress-track">
+            <div class="splash-progress-bar"></div>
+          </div>
+          <span class="splash-caption">Connecting to verified merchant hub…</span>
         </div>
-        <div class="boot-spinner" aria-hidden="true"></div>
-        <p class="boot-text">Connecting to your merchant workspace…</p>
       </div>
     </main>
   </body>
