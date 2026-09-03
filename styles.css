@@ -2494,3 +2494,360 @@ svg.lucide {
   color: #ffffff;
 }
 
+/* ==========================================================================
+   PRO MARKETPLACE PRODUCT STUDIO STYLES
+   ========================================================================== */
+
+/* Studio Section Cards */
+.studio-section {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  margin-bottom: 20px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.studio-section-header {
+  padding: 14px 20px;
+  background: var(--page-subtle);
+  border-bottom: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.studio-section-title {
+  font-family: var(--font-display);
+  font-size: 14.5px;
+  font-weight: 800;
+  color: var(--ink-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio-section-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--forest-800);
+  background: rgba(10, 82, 67, 0.08);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.studio-section-body {
+  padding: 20px;
+}
+
+/* Profit & Escrow Calculator Box */
+.payout-calculator-box {
+  background: linear-gradient(135deg, rgba(10, 82, 67, 0.04) 0%, rgba(200, 162, 86, 0.08) 100%);
+  border: 1px solid rgba(10, 82, 67, 0.15);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin-top: 14px;
+}
+
+.payout-calc-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  text-align: center;
+}
+
+.payout-calc-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.payout-calc-val {
+  font-family: var(--font-numbers);
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--forest-950);
+}
+
+.payout-calc-val.profit {
+  color: var(--forest-700);
+}
+
+.payout-calc-val.fee {
+  color: var(--gold-600);
+}
+
+.payout-calc-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Variant Type Selector & Matrix */
+.variant-type-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  background: var(--page-subtle);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  width: fit-content;
+}
+
+.variant-type-tab {
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  border-radius: var(--radius-xs);
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.variant-type-tab.active {
+  background: var(--surface);
+  color: var(--forest-900);
+  box-shadow: var(--shadow-sm);
+}
+
+.variant-options-group {
+  margin-bottom: 14px;
+}
+
+.variant-pills-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.variant-checkbox-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1.5px solid var(--border-medium);
+  border-radius: var(--radius-xs);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition: all var(--transition-fast);
+}
+
+.variant-checkbox-pill:hover {
+  border-color: var(--forest-700);
+}
+
+.variant-checkbox-pill input:checked + span {
+  color: var(--forest-900);
+  font-weight: 700;
+}
+
+.variant-checkbox-pill:has(input:checked) {
+  border-color: var(--forest-700);
+  background: rgba(10, 82, 67, 0.06);
+}
+
+/* Variant Matrix Table */
+.variant-matrix-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.variant-matrix-table th {
+  background: var(--page-subtle);
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  border-bottom: 1px solid var(--border-medium);
+}
+
+.variant-matrix-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-light);
+  vertical-align: middle;
+}
+
+.variant-matrix-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  font-family: var(--font-numbers);
+}
+
+/* Quality Score & Readiness Checklist */
+.quality-checklist-card {
+  background: var(--page-subtle);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  border: 1px solid var(--border-light);
+  margin-top: 16px;
+}
+
+.quality-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.quality-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quality-items-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.quality-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quality-item.passed {
+  color: var(--forest-700);
+  font-weight: 600;
+}
+
+.quality-item.missing {
+  color: var(--ink-faint);
+}
+
+/* Mobile Simulator Switcher & Detail Mockup */
+.preview-mode-switch {
+  display: flex;
+  gap: 6px;
+  background: var(--page-subtle);
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+}
+
+.preview-mode-btn {
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.preview-mode-btn.active {
+  background: var(--surface);
+  color: var(--forest-900);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Detail View Mockup Styles */
+.shopper-detail-mock {
+  background: #ffffff;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-medium);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+.shopper-detail-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.shopper-detail-hero {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: var(--page-subtle);
+}
+
+.shopper-detail-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shopper-detail-brand {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--forest-700);
+  letter-spacing: 0.05em;
+}
+
+.shopper-detail-title {
+  font-size: 14.5px;
+  font-weight: 800;
+  color: var(--ink-primary);
+  line-height: 1.35;
+}
+
+.shopper-detail-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--ink-secondary);
+}
+
+.shopper-detail-bullets li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.shopper-detail-bullets li::before {
+  content: "•";
+  color: var(--forest-700);
+  font-weight: bold;
+}
+
+.shopper-escrow-badge {
+  background: rgba(10, 82, 67, 0.06);
+  border: 1px solid rgba(10, 82, 67, 0.15);
+  border-radius: var(--radius-xs);
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--forest-900);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
