@@ -45,6 +45,7 @@ const state = {
   productDraft: null,
   notice: null,
   sidebarOpen: false,
+  sidebarCollapsed: window.localStorage.getItem('sfbf-sidebar-collapsed') === 'true',
   showPassword: false,
   workspaceError: '',
   partialDataError: '',
@@ -674,10 +675,10 @@ function renderOnboardingWizardHtml() {
 function navItem(view, iconName, label, badgeCount) {
   const active = state.activeView === view;
   return `
-    <button class="nav-item" type="button" data-action="navigate" data-view="${view}" aria-current="${active ? 'page' : 'false'}">
+    <button class="nav-item" type="button" data-action="navigate" data-view="${view}" aria-current="${active ? 'page' : 'false'}" title="${escapeAttribute(label)}">
       <div class="nav-item-left">
         ${icon(iconName)}
-        <span>${escapeHtml(label)}</span>
+        <span class="nav-label">${escapeHtml(label)}</span>
       </div>
       ${badgeCount !== undefined && badgeCount > 0 ? `<span class="nav-badge">${escapeHtml(badgeCount)}</span>` : ''}
     </button>`;
@@ -695,12 +696,13 @@ function renderShellHtml() {
       <!-- Mobile Backdrop -->
       <div class="sidebar-backdrop ${state.sidebarOpen ? 'open' : ''}" data-action="toggle-sidebar"></div>
 
-      <!-- Left Sidebar Navigation with White/Gold Floating Logo on Dark Green -->
-      <aside class="sidebar ${state.sidebarOpen ? 'open' : ''}">
-        <div>
+      <!-- Left Sidebar Navigation -->
+      <aside class="sidebar ${state.sidebarOpen ? 'open' : ''} ${state.sidebarCollapsed ? 'collapsed' : ''}">
+        <div style="display:flex;flex-direction:column;min-height:0;flex:1;">
           <div class="sidebar-top">
-            <a href="#" class="sidebar-floating-brand" data-action="navigate" data-view="dashboard">
+            <a href="#" class="sidebar-floating-brand" data-action="navigate" data-view="dashboard" title="SellFastBuyFast">
               <img src="assets/sellfastbuyfast-logo-white.png" alt="SellFastBuyFast" class="sidebar-floating-logo" />
+              <div class="sidebar-collapsed-brand">${icon('shopping-bag')}</div>
             </a>
           </div>
 
@@ -728,33 +730,44 @@ function renderShellHtml() {
               <div class="merchant-name">${escapeHtml(state.merchant?.businessName || 'Merchant Store')}</div>
               <div class="merchant-role-badge">${icon('badge-check')} ${escapeHtml(overview?.viewer?.memberRole || 'Owner')}</div>
             </div>
-            <button type="button" class="btn-quiet" data-action="sign-out" title="Sign Out" style="color:rgba(255,255,255,0.7);padding:6px;">
+            <button type="button" class="btn-quiet sign-out-btn" data-action="sign-out" title="Sign Out" style="color:rgba(255,255,255,0.7);padding:6px;">
               ${icon('log-out')}
             </button>
           </div>
         </div>
       </aside>
 
-      <!-- Main Workspace -->
+      <!-- Main Workspace (Pinned Topbar + Isolated Scroll Content) -->
       <main class="workspace-pane">
-        <!-- Responsive Topbar -->
+        <!-- Topbar -->
         <header class="topbar">
           <div class="topbar-left">
+            <button class="desktop-collapse-btn" type="button" data-action="toggle-collapse" title="${state.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}">
+              ${icon(state.sidebarCollapsed ? 'panel-left-open' : 'panel-left-close')}
+            </button>
             <button class="mobile-menu-btn" type="button" data-action="toggle-sidebar" aria-label="Toggle navigation">
               ${icon('menu')}
             </button>
-            <div class="topbar-title">${escapeHtml(VIEW_TITLES[state.activeView] || 'Overview')}</div>
+            <div class="topbar-breadcrumbs">
+              <span class="breadcrumb-root">Merchant Hub</span>
+              <span class="breadcrumb-sep">/</span>
+              <span class="breadcrumb-current">${escapeHtml(VIEW_TITLES[state.activeView] || 'Overview')}</span>
+            </div>
           </div>
 
           <div class="topbar-actions">
+            <button class="btn btn-quiet btn-sm" type="button" data-action="refresh-current" title="Refresh store data">
+              ${icon('refresh-cw')} <span class="hide-mobile">Refresh</span>
+            </button>
+            <div class="topbar-divider"></div>
             ${statusBadge(verification)}
             <button class="btn btn-primary btn-sm" type="button" data-action="navigate" data-view="add-product" ${catalogueEnabled ? '' : 'disabled'}>
-              ${icon('plus')} <span style="display:none;@media(min-width:640px){display:inline}">New Product</span>
+              ${icon('plus')} <span class="hide-mobile">New Product</span>
             </button>
           </div>
         </header>
 
-        <!-- Dynamic Content View -->
+        <!-- Dynamic Content View (The ONLY scrollable container!) -->
         <div class="page-content">
           ${state.partialDataError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.partialDataError)}</span><button class="btn btn-secondary btn-sm" type="button" data-action="refresh-current">Try again</button></div>` : ''}
           ${renderCurrentView()}
@@ -828,20 +841,6 @@ function renderDashboardView() {
       </div>
     </div>
 
-    <!-- Store Verification & Settlement Policy Banner -->
-    <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;background:var(--page-subtle);border:1px solid var(--border-light);border-radius:var(--radius-md);padding:12px 18px;margin-bottom:20px;">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span style="font-size:13px;font-weight:700;color:var(--ink-secondary);display:flex;align-items:center;gap:6px;">
-          ${icon('badge-check')} CAC & Store Identity:
-        </span>
-        ${statusBadge(verStatus)}
-      </div>
-      <div style="font-size:12.5px;color:var(--ink-muted);display:flex;align-items:center;gap:16px;">
-        <span>${icon('lock')} 7-Day Escrow Protection Active</span>
-        <span>${icon('file-text')} Double-Entry Bookkeeping Enabled</span>
-      </div>
-    </div>
-
     <!-- Live operational metrics -->
     <div class="metrics-grid">
       <div class="metric-card" style="cursor:pointer;" data-action="navigate" data-view="fulfilment" data-filter="needs-action">
@@ -893,8 +892,8 @@ function renderDashboardView() {
     <div class="card" style="margin-top:20px;">
       <div class="card-header">
         <div>
-          <h2 class="card-title">Urgent Action Board</h2>
-          <p class="card-subtitle">Orders requiring immediate merchant acceptance, packing, or courier dispatch.</p>
+          <h2 class="card-title">Orders Requiring Action</h2>
+          <p class="card-subtitle">Immediate merchant acceptance, packing, or courier dispatch.</p>
         </div>
         <button class="btn btn-quiet" type="button" data-action="navigate" data-view="fulfilment">
           View All Orders (${state.orders.length}) ${icon('arrow-right')}
@@ -902,27 +901,6 @@ function renderDashboardView() {
       </div>
       <div class="table-container">
         ${renderOrdersTable(urgentOrders, true)}
-      </div>
-    </div>
-
-    <!-- Merchant Operations Playbook -->
-    <div class="playbook-grid">
-      <div class="playbook-card">
-        <div class="playbook-icon">${icon('truck')}</div>
-        <h3 class="playbook-title">Courier Logistics Guide</h3>
-        <p class="playbook-desc">Vendors do not perform doorstep deliveries. You pack and hand parcels over to reputable couriers (GIGL, DHL, Fez, Kwik). Recording the tracking waybill notifies the buyer automatically.</p>
-      </div>
-
-      <div class="playbook-card">
-        <div class="playbook-icon">${icon('shield-alert')}</div>
-        <h3 class="playbook-title">7-Day Return Escrow</h3>
-        <p class="playbook-desc">Customer order payments are safely protected in double-entry escrow. Once the carrier confirms delivery, the customer has a 7-day inspection window before settlement release.</p>
-      </div>
-
-      <div class="playbook-card">
-        <div class="playbook-icon">${icon('package-check')}</div>
-        <h3 class="playbook-title">Stock Reservation Model</h3>
-        <p class="playbook-desc">Stock is held transactionally during shopper checkout. Keep your inventory numbers accurate to prevent cancellation penalties and maintain verified vendor standing.</p>
       </div>
     </div>`;
 }
@@ -1244,15 +1222,10 @@ function renderFulfilmentView() {
   }
 
   return `
-    <div class="page-header">
+    <div class="view-header">
       <div>
-        <h1 class="page-title">Fulfilment Queue</h1>
-        <p class="page-subtitle">Accept, pack, and record courier handoff in sequence. Doorstep delivery is confirmed by authorized carrier proof.</p>
-      </div>
-      <div style="display:flex;gap:10px;">
-        <button class="btn btn-secondary btn-sm" type="button" data-action="refresh-current">
-          ${icon('refresh-cw')} Refresh Queue
-        </button>
+        <h1 class="view-title">Fulfilment Pipeline</h1>
+        <p class="view-subtitle">Accept, pack, and hand parcels to couriers in sequential order.</p>
       </div>
     </div>
 
@@ -1260,7 +1233,7 @@ function renderFulfilmentView() {
     <div class="filter-search-bar">
       <div class="filter-pills-wrap">
         <button class="filter-pill ${currentFilter === 'all' ? 'active' : ''}" type="button" data-action="set-fulfilment-filter" data-filter="all">
-          All Orders <span class="filter-count">${totalCount}</span>
+          All <span class="filter-count">${totalCount}</span>
         </button>
         <button class="filter-pill ${currentFilter === 'to-accept' ? 'active' : ''}" type="button" data-action="set-fulfilment-filter" data-filter="to-accept">
           Needs Acceptance <span class="filter-count ${toAcceptCount > 0 ? 'warn' : ''}">${toAcceptCount}</span>
@@ -1327,15 +1300,10 @@ function renderReturnsView() {
   }
 
   return `
-    <div class="page-header">
+    <div class="view-header">
       <div>
-        <h1 class="page-title">Returns & Customer Disputes</h1>
-        <p class="page-subtitle">Review customer return requests within the 7-day buyer protection window. Authorize valid returns or reject with clear explanation.</p>
-      </div>
-      <div style="display:flex;gap:10px;">
-        <button class="btn btn-secondary btn-sm" type="button" data-action="refresh-current">
-          ${icon('refresh-cw')} Refresh Cases
-        </button>
+        <h1 class="view-title">Returns & Customer Disputes</h1>
+        <p class="view-subtitle">Review customer claims within the 7-day buyer protection window.</p>
       </div>
     </div>
 
@@ -1343,7 +1311,7 @@ function renderReturnsView() {
     <div class="filter-search-bar">
       <div class="filter-pills-wrap">
         <button class="filter-pill ${currentFilter === 'all' ? 'active' : ''}" type="button" data-action="set-returns-filter" data-filter="all">
-          All Requests <span class="filter-count">${totalCount}</span>
+          All <span class="filter-count">${totalCount}</span>
         </button>
         <button class="filter-pill ${currentFilter === 'needs-decision' ? 'active' : ''}" type="button" data-action="set-returns-filter" data-filter="needs-decision">
           Needs Decision <span class="filter-count ${requestedCount > 0 ? 'warn' : ''}">${requestedCount}</span>
@@ -2165,6 +2133,13 @@ document.addEventListener('click', async (event) => {
 
   if (action === 'toggle-sidebar') {
     state.sidebarOpen = !state.sidebarOpen;
+    render();
+    return;
+  }
+
+  if (action === 'toggle-collapse') {
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    window.localStorage.setItem('sfbf-sidebar-collapsed', String(state.sidebarCollapsed));
     render();
     return;
   }
