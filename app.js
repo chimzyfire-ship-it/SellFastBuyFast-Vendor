@@ -29,6 +29,10 @@ const state = {
   activeView: 'dashboard',
   catalogueFilter: 'all',
   fulfilmentFilter: 'all',
+  fulfilmentSearch: '',
+  returnsFilter: 'all',
+  returnsSearch: '',
+  selectedOrder: null,
   loading: true,
   splashActive: true,
   busy: null,
@@ -792,26 +796,57 @@ function renderDashboardView() {
   if (!overview) return renderSkeletonWorkspace();
 
   const pendingCount = (overview?.fulfilment?.awaitingAcceptance ?? 0) + (overview?.fulfilment?.awaitingPacking ?? 0);
-  const urgentOrders = state.orders.filter((o) => ['payment_confirmed', 'processing'].includes(o.status)).slice(0, 6);
+  const inTransitCount = overview?.fulfilment?.inTransit ?? 0;
+  const catalogueCount = overview?.catalogue?.published ?? state.products.length;
+  const returnsCount = overview?.returnRequests?.requested ?? 0;
+  const urgentOrders = state.orders.filter((o) => ['payment_confirmed', 'processing'].includes(o.status)).slice(0, 8);
+  const verStatus = overview?.verification?.status || state.merchant?.status || 'approved';
 
   return `
     <!-- Top Ambient Banner -->
     <div class="ambient-banner-card">
       <img src="assets/vendor-receipt-macro.jpg" alt="Ambient Mesh" class="ambient-banner-bg" />
       <div class="ambient-banner-content">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <span class="status-pill status-pill-success" style="background:rgba(255,255,255,0.2);color:#ffffff;border:1px solid rgba(255,255,255,0.3);">
+            ${icon('shield-check')} Verified Merchant Hub
+          </span>
+          <span style="font-size:12.5px;color:rgba(255,255,255,0.85);font-weight:600;">
+            ${escapeHtml(state.merchant?.lga || 'Lagos')}, Nigeria
+          </span>
+        </div>
         <h2 class="ambient-banner-title">Welcome back, ${escapeHtml(state.merchant?.businessName || 'Partner')}</h2>
-        <p class="ambient-banner-text">Your live merchant workspace has <strong>${pendingCount} orders</strong> ready for the next fulfilment step.</p>
-        <button class="btn btn-secondary btn-sm" type="button" data-action="navigate" data-view="fulfilment" style="color:var(--forest-950);font-weight:700;">
-          ${icon('truck')} View Fulfilment Queue
-        </button>
+        <p class="ambient-banner-text">Your store currently has <strong>${pendingCount} orders</strong> awaiting immediate fulfillment actions.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;">
+          <button class="btn btn-secondary btn-sm" type="button" data-action="navigate" data-view="fulfilment" style="color:var(--forest-950);font-weight:700;">
+            ${icon('truck')} Fulfilment Queue (${pendingCount})
+          </button>
+          <button class="btn btn-quiet btn-sm" type="button" data-action="navigate" data-view="add-product" style="color:#ffffff;background:rgba(255,255,255,0.15);font-weight:600;">
+            ${icon('plus')} Add Product
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Store Verification & Settlement Policy Banner -->
+    <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;background:var(--page-subtle);border:1px solid var(--border-light);border-radius:var(--radius-md);padding:12px 18px;margin-bottom:20px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:13px;font-weight:700;color:var(--ink-secondary);display:flex;align-items:center;gap:6px;">
+          ${icon('badge-check')} CAC & Store Identity:
+        </span>
+        ${statusBadge(verStatus)}
+      </div>
+      <div style="font-size:12.5px;color:var(--ink-muted);display:flex;align-items:center;gap:16px;">
+        <span>${icon('lock')} 7-Day Escrow Protection Active</span>
+        <span>${icon('file-text')} Double-Entry Bookkeeping Enabled</span>
       </div>
     </div>
 
     <!-- Live operational metrics -->
     <div class="metrics-grid">
-      <div class="metric-card">
+      <div class="metric-card" style="cursor:pointer;" data-action="navigate" data-view="fulfilment" data-filter="needs-action">
         <div class="metric-header">
-          <span class="metric-title">Orders to dispatch</span>
+          <span class="metric-title">Orders to Dispatch</span>
           <div class="metric-icon-box">${icon('package')}</div>
         </div>
         <div class="metric-value">${pendingCount}</div>
@@ -820,53 +855,74 @@ function renderDashboardView() {
         </div>
       </div>
 
-      <div class="metric-card">
+      <div class="metric-card" style="cursor:pointer;" data-action="navigate" data-view="fulfilment" data-filter="in-transit">
         <div class="metric-header">
-          <span class="metric-title">In transit</span>
+          <span class="metric-title">In Transit</span>
           <div class="metric-icon-box">${icon('truck')}</div>
         </div>
-        <div class="metric-value">${overview?.fulfilment?.inTransit ?? 0}</div>
+        <div class="metric-value">${inTransitCount}</div>
         <div class="metric-footer">
-          <span>Waiting for carrier delivery confirmation</span>
+          <span>With courier awaiting delivery proof</span>
         </div>
       </div>
 
-      <div class="metric-card">
+      <div class="metric-card" style="cursor:pointer;" data-action="navigate" data-view="catalogue">
         <div class="metric-header">
           <span class="metric-title">Active Catalogue</span>
           <div class="metric-icon-box">${icon('layers')}</div>
         </div>
-        <div class="metric-value">${overview?.catalogue?.published ?? state.products.length}</div>
+        <div class="metric-value">${catalogueCount}</div>
         <div class="metric-footer">
           <span>${overview?.catalogue?.draft ?? 0} drafts · ${overview?.catalogue?.pendingApproval ?? 0} in review</span>
         </div>
       </div>
 
-      <div class="metric-card">
+      <div class="metric-card" style="cursor:pointer;" data-action="navigate" data-view="returns">
         <div class="metric-header">
-          <span class="metric-title">Return requests</span>
+          <span class="metric-title">Return Requests</span>
           <div class="metric-icon-box">${icon('rotate-ccw')}</div>
         </div>
-        <div class="metric-value">${overview?.returnRequests?.requested ?? 0}</div>
+        <div class="metric-value">${returnsCount}</div>
         <div class="metric-footer">
-          <span>${overview?.returnRequests?.open ?? 0} open across all return stages</span>
+          <span>${overview?.returnRequests?.open ?? 0} open return cases</span>
         </div>
       </div>
     </div>
 
     <!-- Urgent Action Queue Table -->
-    <div class="card">
+    <div class="card" style="margin-top:20px;">
       <div class="card-header">
         <div>
-          <h2 class="card-title">Orders Requiring Action</h2>
-          <p class="card-subtitle">Accept, pack, and record a courier handoff only when each live order reaches that step.</p>
+          <h2 class="card-title">Urgent Action Board</h2>
+          <p class="card-subtitle">Orders requiring immediate merchant acceptance, packing, or courier dispatch.</p>
         </div>
         <button class="btn btn-quiet" type="button" data-action="navigate" data-view="fulfilment">
-          View All Orders ${icon('arrow-right')}
+          View All Orders (${state.orders.length}) ${icon('arrow-right')}
         </button>
       </div>
       <div class="table-container">
         ${renderOrdersTable(urgentOrders, true)}
+      </div>
+    </div>
+
+    <!-- Merchant Operations Playbook -->
+    <div class="playbook-grid">
+      <div class="playbook-card">
+        <div class="playbook-icon">${icon('truck')}</div>
+        <h3 class="playbook-title">Courier Logistics Guide</h3>
+        <p class="playbook-desc">Vendors do not perform doorstep deliveries. You pack and hand parcels over to reputable couriers (GIGL, DHL, Fez, Kwik). Recording the tracking waybill notifies the buyer automatically.</p>
+      </div>
+
+      <div class="playbook-card">
+        <div class="playbook-icon">${icon('shield-alert')}</div>
+        <h3 class="playbook-title">7-Day Return Escrow</h3>
+        <p class="playbook-desc">Customer order payments are safely protected in double-entry escrow. Once the carrier confirms delivery, the customer has a 7-day inspection window before settlement release.</p>
+      </div>
+
+      <div class="playbook-card">
+        <div class="playbook-icon">${icon('package-check')}</div>
+        <h3 class="playbook-title">Stock Reservation Model</h3>
+        <p class="playbook-desc">Stock is held transactionally during shopper checkout. Keep your inventory numbers accurate to prevent cancellation penalties and maintain verified vendor standing.</p>
       </div>
     </div>`;
 }
@@ -1072,41 +1128,62 @@ function renderOrdersTable(orderList, concise = false) {
   if (orderList.length === 0) {
     return `
       <div class="empty-state">
-        <div class="empty-icon-wrap">${icon('check-circle-2')}</div>
-        <h3 class="empty-title">No pending orders</h3>
-        <p class="empty-text">There are no live orders that need a merchant action right now.</p>
+        <div class="empty-icon-wrap">${icon('package-open')}</div>
+        <h3 class="empty-title">No orders in this view</h3>
+        <p class="empty-text">No active orders match the current filter or search criteria.</p>
       </div>`;
   }
 
   const rows = orderList.map((order) => {
     const items = order.lines?.map((l) => `${escapeHtml(l.productTitle)} (×${l.quantity})`).join(', ') || 'Item';
-    const address = order.deliveryAddress ? `${order.deliveryAddress.streetAddress || ''}, ${order.deliveryAddress.lga || ''}, ${order.deliveryAddress.state || ''}` : 'Address recorded';
+    const address = order.deliveryAddress;
+    const recipientName = address?.contactName || order.buyerName || 'Valued Customer';
+    const destination = [address?.lga, address?.state].filter(Boolean).join(', ') || 'Nigeria';
+    const searchString = `${order.orderNumber} ${recipientName} ${destination} ${items}`.toLowerCase();
+    const totalAmount = formatNaira(order.totalAmountMinor || (order.lines?.reduce((s, l) => s + (l.unitPriceMinor * l.quantity), 0) + (order.deliveryFeeMinor || 0)));
 
     let actionBtn = '';
     if (order.status === 'payment_confirmed') {
       actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="accept-order" data-order-id="${escapeAttribute(order.id)}">${icon('check')} Accept Order</button>`;
-    } else if (order.status === 'processing' && order.shipment?.status === 'pending') {
+    } else if (order.status === 'processing' && order.shipment?.status !== 'packed') {
       actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="pack-order" data-order-id="${escapeAttribute(order.id)}">${icon('box')} Mark Packed</button>`;
     } else if (order.status === 'processing' && order.shipment?.status === 'packed') {
-      actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="ship-order" data-order-id="${escapeAttribute(order.id)}" data-order-number="${escapeAttribute(order.orderNumber)}">${icon('send')} Record courier handoff</button>`;
+      actionBtn = `<button class="btn btn-primary btn-sm" type="button" data-action="ship-order" data-order-id="${escapeAttribute(order.id)}" data-order-number="${escapeAttribute(order.orderNumber)}">${icon('send')} Dispatch / Courier</button>`;
     } else if (order.status === 'in_transit') {
-      actionBtn = `<span style="font-size:12.5px;color:var(--forest-700);font-weight:700;">${icon('truck')} Awaiting carrier delivery confirmation</span>`;
+      actionBtn = `<span class="status-pill status-pill-success" style="font-size:12px;">${icon('truck')} In Transit (${escapeHtml(order.shipment?.carrier || 'Carrier')})</span>`;
+    } else if (['delivered', 'completed'].includes(order.status)) {
+      actionBtn = `<span class="status-pill status-pill-neutral">${icon('check-circle-2')} Delivered</span>`;
     } else {
-      actionBtn = `<span class="table-sub-text">Completed</span>`;
+      actionBtn = `<span class="table-sub-text">${escapeHtml(order.status)}</span>`;
     }
 
     return `
-      <tr>
+      <tr data-order-row="${escapeAttribute(searchString)}">
         <td>
-          <div class="table-main-text">${escapeHtml(order.orderNumber)}</div>
+          <div class="table-main-text" style="font-weight:700;">${escapeHtml(order.orderNumber)}</div>
           <div class="table-sub-text">${formatDate(order.createdAt)}</div>
         </td>
         <td>
-          <div class="table-main-text">${escapeHtml(items)}</div>
+          <div class="table-main-text" style="max-width:260px;white-space:normal;line-height:1.4;">${escapeHtml(items)}</div>
         </td>
-        ${concise ? '' : `<td><div class="table-sub-text">${escapeHtml(address)}</div></td>`}
+        ${concise ? '' : `
+          <td>
+            <div class="table-main-text">${escapeHtml(recipientName)}</div>
+            <div class="table-sub-text">${escapeHtml(destination)}</div>
+          </td>
+          <td>
+            <div class="table-main-text" style="font-family:var(--font-numbers);font-weight:700;">${totalAmount}</div>
+          </td>
+        `}
         <td>${statusBadge(order.status)}</td>
-        <td><div class="table-actions">${actionBtn}</div></td>
+        <td>
+          <div class="table-actions" style="display:flex;gap:6px;align-items:center;">
+            ${actionBtn}
+            <button class="btn btn-secondary btn-sm" type="button" data-action="view-order-detail" data-order-id="${escapeAttribute(order.id)}" title="View Order Breakdown">
+              ${icon('eye')} Details
+            </button>
+          </div>
+        </td>
       </tr>`;
   }).join('');
 
@@ -1116,7 +1193,7 @@ function renderOrdersTable(orderList, concise = false) {
         <tr>
           <th>Order Number</th>
           <th>Purchased Items</th>
-          ${concise ? '' : '<th>Destination Address</th>'}
+          ${concise ? '' : '<th>Recipient & Destination</th><th>Amount</th>'}
           <th>Status</th>
           <th>Next Action</th>
         </tr>
@@ -1128,23 +1205,89 @@ function renderOrdersTable(orderList, concise = false) {
 }
 
 function renderFulfilmentView() {
+  const orders = state.orders;
+  const currentFilter = state.fulfilmentFilter || 'all';
+  const searchTerm = (state.fulfilmentSearch || '').toLowerCase();
+
+  // Metrics counts
+  const totalCount = orders.length;
+  const toAcceptCount = orders.filter((o) => o.status === 'payment_confirmed').length;
+  const toPackCount = orders.filter((o) => o.status === 'processing' && o.shipment?.status !== 'packed').length;
+  const toShipCount = orders.filter((o) => o.status === 'processing' && o.shipment?.status === 'packed').length;
+  const inTransitCount = orders.filter((o) => o.status === 'in_transit').length;
+  const completedCount = orders.filter((o) => ['delivered', 'completed'].includes(o.status)).length;
+
+  // Filter orders
+  let filtered = orders;
+  if (currentFilter === 'needs-action') {
+    filtered = orders.filter((o) => ['payment_confirmed', 'processing'].includes(o.status));
+  } else if (currentFilter === 'to-accept') {
+    filtered = orders.filter((o) => o.status === 'payment_confirmed');
+  } else if (currentFilter === 'to-pack') {
+    filtered = orders.filter((o) => o.status === 'processing' && o.shipment?.status !== 'packed');
+  } else if (currentFilter === 'to-ship') {
+    filtered = orders.filter((o) => o.status === 'processing' && o.shipment?.status === 'packed');
+  } else if (currentFilter === 'in-transit') {
+    filtered = orders.filter((o) => o.status === 'in_transit');
+  } else if (currentFilter === 'completed') {
+    filtered = orders.filter((o) => ['delivered', 'completed'].includes(o.status));
+  }
+
+  if (searchTerm) {
+    filtered = filtered.filter((o) => {
+      const items = o.lines?.map((l) => l.productTitle).join(' ') || '';
+      const recipient = o.deliveryAddress?.contactName || '';
+      const lga = o.deliveryAddress?.lga || '';
+      const stateName = o.deliveryAddress?.state || '';
+      return `${o.orderNumber} ${recipient} ${lga} ${stateName} ${items}`.toLowerCase().includes(searchTerm);
+    });
+  }
+
   return `
     <div class="page-header">
       <div>
         <h1 class="page-title">Fulfilment Queue</h1>
-        <p class="page-subtitle">Accept, pack, and record courier handoff in the sequence confirmed by the live order state.</p>
+        <p class="page-subtitle">Accept, pack, and record courier handoff in sequence. Doorstep delivery is confirmed by authorized carrier proof.</p>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-secondary btn-sm" type="button" data-action="refresh-current">
+          ${icon('refresh-cw')} Refresh Queue
+        </button>
+      </div>
+    </div>
+
+    <!-- Filter & Search Controls -->
+    <div class="filter-search-bar">
+      <div class="filter-pills-wrap">
+        <button class="filter-pill ${currentFilter === 'all' ? 'active' : ''}" type="button" data-action="set-fulfilment-filter" data-filter="all">
+          All Orders <span class="filter-count">${totalCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'to-accept' ? 'active' : ''}" type="button" data-action="set-fulfilment-filter" data-filter="to-accept">
+          Needs Acceptance <span class="filter-count ${toAcceptCount > 0 ? 'warn' : ''}">${toAcceptCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'to-pack' ? 'active' : ''}" type="button" data-action="set-fulfilment-filter" data-filter="to-pack">
+          Ready to Pack <span class="filter-count ${toPackCount > 0 ? 'warn' : ''}">${toPackCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'to-ship' ? 'active' : ''}" type="button" data-action="set-fulfilment-filter" data-filter="to-ship">
+          Ready to Ship <span class="filter-count">${toShipCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'in-transit' ? 'active' : ''}" type="button" data-action="set-fulfilment-filter" data-filter="in-transit">
+          In Transit <span class="filter-count">${inTransitCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'completed' ? 'active' : ''}" type="button" data-action="set-fulfilment-filter" data-filter="completed">
+          Delivered <span class="filter-count">${completedCount}</span>
+        </button>
+      </div>
+
+      <div class="search-input-wrap">
+        ${icon('search')}
+        <input class="search-input" id="fulfilment-search" type="text" placeholder="Search order #, customer, or LGA…" value="${escapeAttribute(state.fulfilmentSearch)}" />
       </div>
     </div>
 
     <div class="card">
-      <div class="card-header">
-        <div>
-          <h2 class="card-title">Active Orders</h2>
-          <p class="card-subtitle">Delivery confirmation is completed by authorised platform operations after the carrier handoff.</p>
-        </div>
-      </div>
       <div class="table-container">
-        ${renderOrdersTable(state.orders)}
+        ${renderOrdersTable(filtered, false)}
       </div>
     </div>`;
 }
@@ -1154,55 +1297,153 @@ function renderFulfilmentView() {
    ========================================================================== */
 
 function renderReturnsView() {
-  const rows = state.returns.map((req) => `
-    <tr>
-      <td>
-        <div class="table-main-text">${escapeHtml(req.order?.orderNumber || 'Order')}</div>
-        <div class="table-sub-text">Requested ${formatDate(req.createdAt)}</div>
-      </td>
-      <td>${escapeHtml(req.reason)}</td>
-      <td>${statusBadge(req.status)}</td>
-      <td>
-        <div class="table-actions">
-          ${req.status === 'requested' ? `
-            <button class="btn btn-primary btn-sm" type="button" data-action="return-decision" data-return-id="${escapeAttribute(req.id)}" data-decision="approved">${icon('check')} Approve</button>
-            <button class="btn btn-danger btn-sm" type="button" data-action="return-decision" data-return-id="${escapeAttribute(req.id)}" data-decision="rejected">${icon('x')} Reject</button>
-          ` : `<span class="table-sub-text">Decision recorded</span>`}
-        </div>
-      </td>
-    </tr>
-  `).join('');
+  const returns = state.returns;
+  const currentFilter = state.returnsFilter || 'all';
+  const searchTerm = (state.returnsSearch || '').toLowerCase();
+
+  const totalCount = returns.length;
+  const requestedCount = returns.filter((r) => r.status === 'requested').length;
+  const approvedCount = returns.filter((r) => r.status === 'approved').length;
+  const rejectedCount = returns.filter((r) => r.status === 'rejected').length;
+  const resolvedCount = returns.filter((r) => ['received', 'completed', 'refund_initiated'].includes(r.status)).length;
+
+  let filtered = returns;
+  if (currentFilter === 'needs-decision') {
+    filtered = returns.filter((r) => r.status === 'requested');
+  } else if (currentFilter === 'approved') {
+    filtered = returns.filter((r) => r.status === 'approved');
+  } else if (currentFilter === 'rejected') {
+    filtered = returns.filter((r) => r.status === 'rejected');
+  } else if (currentFilter === 'resolved') {
+    filtered = returns.filter((r) => ['received', 'completed', 'refund_initiated'].includes(r.status));
+  }
+
+  if (searchTerm) {
+    filtered = filtered.filter((r) => {
+      const orderNum = r.order?.orderNumber || '';
+      const reason = r.reason || '';
+      return `${orderNum} ${reason}`.toLowerCase().includes(searchTerm);
+    });
+  }
 
   return `
     <div class="page-header">
       <div>
         <h1 class="page-title">Returns & Customer Disputes</h1>
-        <p class="page-subtitle">Review and decide customer return requests transparently.</p>
+        <p class="page-subtitle">Review customer return requests within the 7-day buyer protection window. Authorize valid returns or reject with clear explanation.</p>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-secondary btn-sm" type="button" data-action="refresh-current">
+          ${icon('refresh-cw')} Refresh Cases
+        </button>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header">
-        <div>
-          <h2 class="card-title">Return Cases</h2>
-          <p class="card-subtitle">Approvals allow customers to ship items back to your warehouse.</p>
+    <!-- Filter & Search Controls -->
+    <div class="filter-search-bar">
+      <div class="filter-pills-wrap">
+        <button class="filter-pill ${currentFilter === 'all' ? 'active' : ''}" type="button" data-action="set-returns-filter" data-filter="all">
+          All Requests <span class="filter-count">${totalCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'needs-decision' ? 'active' : ''}" type="button" data-action="set-returns-filter" data-filter="needs-decision">
+          Needs Decision <span class="filter-count ${requestedCount > 0 ? 'warn' : ''}">${requestedCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'approved' ? 'active' : ''}" type="button" data-action="set-returns-filter" data-filter="approved">
+          Approved <span class="filter-count">${approvedCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'rejected' ? 'active' : ''}" type="button" data-action="set-returns-filter" data-filter="rejected">
+          Declined <span class="filter-count">${rejectedCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'resolved' ? 'active' : ''}" type="button" data-action="set-returns-filter" data-filter="resolved">
+          Resolved <span class="filter-count">${resolvedCount}</span>
+        </button>
+      </div>
+
+      <div class="search-input-wrap">
+        ${icon('search')}
+        <input class="search-input" id="returns-search" type="text" placeholder="Search by order # or reason…" value="${escapeAttribute(state.returnsSearch)}" />
+      </div>
+    </div>
+
+    <!-- Case Cards Grid -->
+    <div class="return-cases-grid">
+      ${filtered.length === 0 ? `
+        <div class="card">
+          <div class="empty-state">
+            <div class="empty-icon-wrap">${icon('rotate-ccw')}</div>
+            <h3 class="empty-title">No return requests found</h3>
+            <p class="empty-text">Your store currently has zero return or dispute cases in this view.</p>
+          </div>
         </div>
-      </div>
-      <div class="table-container">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Order</th>
-              <th>Customer Reason</th>
-              <th>Status</th>
-              <th>Merchant Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows || `<tr><td colspan="4"><div class="empty-state"><div class="empty-icon-wrap">${icon('rotate-ccw')}</div><h3 class="empty-title">No return requests</h3><p class="empty-text">Your store currently has zero pending customer disputes or returns.</p></div></td></tr>`}
-          </tbody>
-        </table>
-      </div>
+      ` : filtered.map((req) => {
+        const orderNum = req.order?.orderNumber || 'Order';
+        const isRequested = req.status === 'requested';
+        const isApproved = req.status === 'approved';
+        const isRejected = req.status === 'rejected';
+
+        return `
+          <div class="return-case-card" data-return-card="${escapeAttribute(`${orderNum} ${req.reason}`.toLowerCase())}">
+            <div class="return-case-header">
+              <div class="return-case-title">
+                ${icon('package')} Order ${escapeHtml(orderNum)}
+                <span style="font-size:12px;font-weight:500;color:var(--ink-muted);">· Requested ${formatDate(req.createdAt)}</span>
+              </div>
+              <div>${statusBadge(req.status)}</div>
+            </div>
+
+            <!-- Reason callout box -->
+            <div class="return-reason-box">
+              ${icon('help-circle')}
+              <div>
+                <strong style="color:var(--ink-primary);display:block;margin-bottom:2px;">Customer Stated Reason:</strong>
+                <span>${escapeHtml(req.reason)}</span>
+              </div>
+            </div>
+
+            <!-- Evidence Photo Preview if available -->
+            ${req.evidenceUrl ? `
+              <div class="return-evidence-preview">
+                <img src="${escapeAttribute(req.evidenceUrl)}" alt="Customer Evidence" class="return-evidence-thumb" data-action="view-evidence" data-url="${escapeAttribute(req.evidenceUrl)}" data-title="Return Evidence for ${escapeAttribute(orderNum)}" />
+                <div>
+                  <div style="font-size:13px;font-weight:700;color:var(--ink-primary);">Attached Evidence Photo</div>
+                  <button type="button" class="btn-quiet btn-sm" data-action="view-evidence" data-url="${escapeAttribute(req.evidenceUrl)}" data-title="Return Evidence for ${escapeAttribute(orderNum)}" style="padding:0;color:var(--forest-700);font-weight:700;">
+                    ${icon('external-link')} Click to view full image
+                  </button>
+                </div>
+              </div>
+            ` : ''}
+
+            <!-- Decision Note if already decided -->
+            ${req.decisionNote ? `
+              <div class="return-decision-note ${isRejected ? 'rejected' : ''}">
+                <strong>Merchant Recorded Note:</strong> ${escapeHtml(req.decisionNote)}
+                ${req.decidedAt ? `<span style="display:block;font-size:11px;color:var(--ink-muted);margin-top:2px;">Decided on ${formatDate(req.decidedAt)}</span>` : ''}
+              </div>
+            ` : ''}
+
+            <!-- Action Controls -->
+            <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;padding-top:6px;border-top:1px solid var(--border-light);">
+              ${isRequested ? `
+                <button class="btn btn-secondary btn-sm" type="button" data-action="return-decision" data-return-id="${escapeAttribute(req.id)}" data-decision="rejected" style="color:var(--rose-600);">
+                  ${icon('x')} Decline Return
+                </button>
+                <button class="btn btn-primary btn-sm" type="button" data-action="return-decision" data-return-id="${escapeAttribute(req.id)}" data-decision="approved">
+                  ${icon('check')} Approve Return
+                </button>
+              ` : isApproved ? `
+                <span style="font-size:12.5px;color:var(--forest-700);font-weight:700;display:flex;align-items:center;gap:6px;">
+                  ${icon('check-circle-2')} Return Authorized — Customer provided return drop-off instructions
+                </span>
+              ` : isRejected ? `
+                <span style="font-size:12.5px;color:var(--rose-600);font-weight:700;display:flex;align-items:center;gap:6px;">
+                  ${icon('x-circle')} Declined by Store
+                </span>
+              ` : `
+                <span class="table-sub-text">Completed</span>
+              `}
+            </div>
+          </div>`;
+      }).join('')}
     </div>`;
 }
 
@@ -1437,8 +1678,8 @@ function renderModal() {
         <form class="modal-dialog" id="ship-form" onclick="event.stopPropagation()">
           <div class="modal-header">
             <div>
-              <h3 class="modal-title">Assign Courier & Waybill</h3>
-              <p class="table-sub-text">Record courier handoff for ${escapeHtml(state.modal.orderNumber)}</p>
+              <h3 class="modal-title">Record Courier Dispatch</h3>
+              <p class="table-sub-text">Dispatch parcel for ${escapeHtml(state.modal.orderNumber)}</p>
             </div>
             <button class="modal-close-btn" type="button" data-action="close-modal">${icon('x')}</button>
           </div>
@@ -1447,30 +1688,34 @@ function renderModal() {
             <input type="hidden" name="orderId" value="${escapeAttribute(state.modal.orderId)}" />
             
             <div class="form-group">
-              <label class="form-label" for="modal-carrier">Logistics Provider</label>
+              <label class="form-label" for="modal-carrier">3rd-Party Logistics Provider</label>
               <select class="select" id="modal-carrier" name="carrier" required>
-                <option value="GIG Logistics">GIG Logistics</option>
+                <option value="GIG Logistics (GIGL)">GIG Logistics (GIGL)</option>
                 <option value="DHL Express Nigeria">DHL Express Nigeria</option>
                 <option value="Fez Delivery">Fez Delivery</option>
-                <option value="Red Star Express">Red Star Express</option>
-                <option value="Merchant Dedicated Courier">Merchant Dedicated Courier</option>
+                <option value="Kwik Delivery">Kwik Delivery</option>
+                <option value="Speedaf Express">Speedaf Express</option>
+                <option value="Red Star Express (FedEx)">Red Star Express (FedEx)</option>
+                <option value="Merchant Dedicated Dispatch Rider">Merchant Dedicated Dispatch Rider</option>
               </select>
             </div>
 
             <div class="form-group">
               <label class="form-label" for="modal-tracking">Waybill / Tracking Number</label>
-              <input class="input" id="modal-tracking" name="trackingCode" placeholder="e.g. GIG-LOS-998811" minlength="3" required />
+              <input class="input" id="modal-tracking" name="trackingCode" placeholder="e.g. GIGL-LOS-849201" minlength="3" required />
+              <span class="form-hint">The customer is automatically notified with this tracking code.</span>
             </div>
 
             <div class="form-group">
-              <label class="form-label" for="modal-evidence">Pickup Evidence Photo URL (Optional)</label>
+              <label class="form-label" for="modal-evidence">Waybill / Proof of Pickup Photo URL (Optional)</label>
               <input class="input" id="modal-evidence" name="pickupEvidenceUrl" type="url" placeholder="https://..." />
+              <span class="form-hint">Optional link to a photo of the signed waybill or dispatch receipt.</span>
             </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" type="button" data-action="close-modal">Cancel</button>
             <button class="btn btn-primary" type="submit" ${state.busy === 'ship-order' ? 'disabled' : ''}>
-              ${state.busy === 'ship-order' ? 'Recording…' : `${icon('truck')} Record courier handoff`}
+              ${state.busy === 'ship-order' ? 'Recording…' : `${icon('truck')} Confirm Dispatch`}
             </button>
           </div>
         </form>
@@ -1484,8 +1729,8 @@ function renderModal() {
         <form class="modal-dialog" id="return-decision-form" onclick="event.stopPropagation()">
           <div class="modal-header">
             <div>
-              <h3 class="modal-title">${isApprove ? 'Approve Return Request' : 'Reject Return Request'}</h3>
-              <p class="table-sub-text">Customer will receive this decision note.</p>
+              <h3 class="modal-title">${isApprove ? 'Approve Customer Return' : 'Decline Customer Return'}</h3>
+              <p class="table-sub-text">Customer and Operations moderation will receive this record.</p>
             </div>
             <button class="modal-close-btn" type="button" data-action="close-modal">${icon('x')}</button>
           </div>
@@ -1495,8 +1740,10 @@ function renderModal() {
             <input type="hidden" name="decision" value="${escapeAttribute(state.modal.decision)}" />
 
             <div class="form-group">
-              <label class="form-label" for="modal-note">Decision Rationale / Instructions</label>
-              <textarea class="textarea" id="modal-note" name="note" placeholder="${isApprove ? 'Provide warehouse return address and packing instructions…' : 'Explain reason for return rejection clearly…'}" minlength="5" required></textarea>
+              <label class="form-label" for="modal-note">
+                ${isApprove ? 'Warehouse Return Instructions & Drop-Off Address' : 'Formal Reason for Decline'}
+              </label>
+              <textarea class="textarea" id="modal-note" name="note" rows="4" placeholder="${isApprove ? 'Enter return warehouse address, drop-off contact number, and packing instructions for the buyer…' : 'Explain why this item is not eligible for return (e.g. hygiene item, opened seal, past return window)…'}" minlength="5" required></textarea>
             </div>
           </div>
           <div class="modal-footer">
@@ -1506,6 +1753,134 @@ function renderModal() {
             </button>
           </div>
         </form>
+      </div>`;
+  }
+
+  if (state.modal.type === 'order-detail') {
+    const order = state.selectedOrder || state.orders.find((o) => o.id === state.modal.orderId);
+    if (!order) return '';
+    const address = order.deliveryAddress || {};
+    const lines = order.lines || [];
+    const shipment = order.shipment || {};
+    const totalNaira = formatNaira(order.totalAmountMinor || (lines.reduce((s, l) => s + (l.unitPriceMinor * l.quantity), 0) + (order.deliveryFeeMinor || 0)));
+    const deliveryFeeNaira = formatNaira(order.deliveryFeeMinor || 0);
+
+    // Determine current timeline stage
+    let stepIndex = 1;
+    if (order.status === 'payment_confirmed') stepIndex = 1;
+    else if (order.status === 'processing' && shipment.status === 'packed') stepIndex = 3;
+    else if (order.status === 'processing') stepIndex = 2;
+    else if (order.status === 'in_transit') stepIndex = 4;
+    else if (['delivered', 'completed'].includes(order.status)) stepIndex = 5;
+
+    let quickActionBtn = '';
+    if (order.status === 'payment_confirmed') {
+      quickActionBtn = `<button class="btn btn-primary" type="button" data-action="accept-order" data-order-id="${escapeAttribute(order.id)}">${icon('check')} Accept Order</button>`;
+    } else if (order.status === 'processing' && shipment.status !== 'packed') {
+      quickActionBtn = `<button class="btn btn-primary" type="button" data-action="pack-order" data-order-id="${escapeAttribute(order.id)}">${icon('box')} Mark Packed</button>`;
+    } else if (order.status === 'processing' && shipment.status === 'packed') {
+      quickActionBtn = `<button class="btn btn-primary" type="button" data-action="ship-order" data-order-id="${escapeAttribute(order.id)}" data-order-number="${escapeAttribute(order.orderNumber)}">${icon('send')} Dispatch / Courier</button>`;
+    }
+
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <div class="modal-dialog modal-dialog-large" onclick="event.stopPropagation()">
+          <div class="modal-header">
+            <div>
+              <h3 class="modal-title">Order ${escapeHtml(order.orderNumber)}</h3>
+              <p class="table-sub-text">Placed on ${formatDate(order.createdAt)}</p>
+            </div>
+            <button class="modal-close-btn" type="button" data-action="close-modal">${icon('x')}</button>
+          </div>
+          <div class="modal-body" style="max-height:75vh;overflow-y:auto;">
+            <!-- Timeline Tracker -->
+            <div class="timeline-tracker">
+              <div class="timeline-step ${stepIndex >= 1 ? (stepIndex === 1 ? 'active' : 'completed') : ''}">
+                <div class="timeline-step-icon">${stepIndex > 1 ? icon('check') : icon('credit-card')}</div>
+                <span class="timeline-step-label">Paid</span>
+              </div>
+              <div class="timeline-step ${stepIndex >= 2 ? (stepIndex === 2 ? 'active' : 'completed') : ''}">
+                <div class="timeline-step-icon">${stepIndex > 2 ? icon('check') : icon('check-circle')}</div>
+                <span class="timeline-step-label">Accepted</span>
+              </div>
+              <div class="timeline-step ${stepIndex >= 3 ? (stepIndex === 3 ? 'active' : 'completed') : ''}">
+                <div class="timeline-step-icon">${stepIndex > 3 ? icon('check') : icon('box')}</div>
+                <span class="timeline-step-label">Packed</span>
+              </div>
+              <div class="timeline-step ${stepIndex >= 4 ? (stepIndex === 4 ? 'active' : 'completed') : ''}">
+                <div class="timeline-step-icon">${stepIndex > 4 ? icon('check') : icon('truck')}</div>
+                <span class="timeline-step-label">Dispatched</span>
+              </div>
+              <div class="timeline-step ${stepIndex >= 5 ? 'completed' : ''}">
+                <div class="timeline-step-icon">${icon('map-pin')}</div>
+                <span class="timeline-step-label">Delivered</span>
+              </div>
+            </div>
+
+            <!-- Customer & Shipping Section -->
+            <div class="order-detail-section">
+              <div class="order-section-title">${icon('user')} Customer & Delivery Details</div>
+              <div class="order-summary-box">
+                <div class="order-summary-row"><strong>Recipient Name:</strong> <span>${escapeHtml(address.contactName || order.buyerName || 'Valued Customer')}</span></div>
+                ${address.contactPhone ? `<div class="order-summary-row"><strong>Phone:</strong> <a href="tel:${escapeAttribute(address.contactPhone)}" style="color:var(--forest-700);font-weight:700;">${escapeHtml(address.contactPhone)}</a></div>` : ''}
+                <div class="order-summary-row"><strong>Destination:</strong> <span>${escapeHtml([address.streetAddress, address.lga, address.state].filter(Boolean).join(', ') || 'Recorded Address')}</span></div>
+                ${address.landmark ? `<div class="order-summary-row"><strong>Landmark:</strong> <span>${escapeHtml(address.landmark)}</span></div>` : ''}
+              </div>
+            </div>
+
+            <!-- Items Purchased Section -->
+            <div class="order-detail-section">
+              <div class="order-section-title">${icon('package')} Order Items (${lines.length})</div>
+              <div class="order-items-list">
+                ${lines.map((line) => `
+                  <div class="order-item-row">
+                    <div class="order-item-info">
+                      <span class="order-item-title">${escapeHtml(line.productTitle)}</span>
+                      <span class="order-item-meta">${escapeHtml(line.variantTitle || 'Standard')} · Quantity: ×${escapeHtml(line.quantity)}</span>
+                    </div>
+                    <span class="order-item-price">${formatNaira((line.unitPriceMinor || 0) * (line.quantity || 1))}</span>
+                  </div>
+                `).join('') || '<div class="table-sub-text">Item breakdown unavailable</div>'}
+              </div>
+            </div>
+
+            <!-- Financial Summary -->
+            <div class="order-detail-section">
+              <div class="order-section-title">${icon('receipt')} Payment & Financials</div>
+              <div class="order-summary-box">
+                <div class="order-summary-row"><span>Delivery Fee</span> <span>${deliveryFeeNaira}</span></div>
+                <div class="order-summary-row total"><span>Total Amount Paid</span> <span>${totalNaira}</span></div>
+              </div>
+            </div>
+
+            <!-- Carrier & Tracking Section (If Dispatched) -->
+            ${shipment.carrier || order.trackingCode ? `
+              <div class="order-detail-section">
+                <div class="order-section-title">${icon('truck')} Courier Tracking Information</div>
+                <div class="order-summary-box">
+                  <div class="order-summary-row"><strong>Courier / Carrier:</strong> <span>${escapeHtml(shipment.carrier || 'Logistics Provider')}</span></div>
+                  <div class="order-summary-row"><strong>Tracking / Waybill Number:</strong> <span style="font-family:var(--font-numbers);font-weight:700;color:var(--forest-700);">${escapeHtml(shipment.trackingCode || order.trackingCode || '—')}</span></div>
+                  ${shipment.pickupEvidenceUrl ? `<div class="order-summary-row"><strong>Pickup Proof:</strong> <a href="#" data-action="view-evidence" data-url="${escapeAttribute(shipment.pickupEvidenceUrl)}" data-title="Pickup Waybill Proof" style="color:var(--forest-700);font-weight:700;">View Waybill Photo</a></div>` : ''}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" type="button" data-action="close-modal">Close</button>
+            ${quickActionBtn}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  if (state.modal.type === 'lightbox') {
+    return `
+      <div class="lightbox-backdrop" data-action="close-modal">
+        <div class="lightbox-content" onclick="event.stopPropagation()">
+          <button class="lightbox-close-btn" type="button" data-action="close-modal">${icon('x')}</button>
+          <img src="${escapeAttribute(state.modal.imageUrl)}" alt="${escapeAttribute(state.modal.title || 'Evidence')}" class="lightbox-img" />
+          <div class="lightbox-caption">${escapeHtml(state.modal.title || 'Evidence Documentation')}</div>
+        </div>
       </div>`;
   }
 
@@ -1834,6 +2209,11 @@ document.addEventListener('click', async (event) => {
 
   if (action === 'navigate') {
     state.activeView = button.dataset.view || 'dashboard';
+    if (button.dataset.filter) {
+      if (state.activeView === 'fulfilment') state.fulfilmentFilter = button.dataset.filter;
+      if (state.activeView === 'catalogue') state.catalogueFilter = button.dataset.filter;
+      if (state.activeView === 'returns') state.returnsFilter = button.dataset.filter;
+    }
     state.sidebarOpen = false;
     state.formError = '';
     render();
@@ -1843,6 +2223,36 @@ document.addEventListener('click', async (event) => {
 
   if (action === 'set-catalogue-filter') {
     state.catalogueFilter = button.dataset.filter || 'all';
+    render();
+    return;
+  }
+
+  if (action === 'set-fulfilment-filter') {
+    state.fulfilmentFilter = button.dataset.filter || 'all';
+    render();
+    return;
+  }
+
+  if (action === 'set-returns-filter') {
+    state.returnsFilter = button.dataset.filter || 'all';
+    render();
+    return;
+  }
+
+  if (action === 'view-order-detail') {
+    const orderId = button.dataset.orderId;
+    state.selectedOrder = state.orders.find((o) => o.id === orderId) || null;
+    state.modal = { type: 'order-detail', orderId };
+    render();
+    return;
+  }
+
+  if (action === 'view-evidence') {
+    state.modal = {
+      type: 'lightbox',
+      imageUrl: button.dataset.url,
+      title: button.dataset.title || 'Evidence Image',
+    };
     render();
     return;
   }
@@ -1934,11 +2344,24 @@ document.addEventListener('click', async (event) => {
 
 // Search input handler
 document.addEventListener('input', (event) => {
-  if (event.target.id !== 'catalogue-search') return;
-  const term = event.target.value.trim().toLowerCase();
-  document.querySelectorAll('[data-product-row]').forEach((row) => {
-    row.hidden = !row.dataset.productRow.includes(term);
-  });
+  if (event.target.id === 'catalogue-search') {
+    const term = event.target.value.trim().toLowerCase();
+    document.querySelectorAll('[data-product-row]').forEach((row) => {
+      row.hidden = !row.dataset.productRow.includes(term);
+    });
+  }
+  if (event.target.id === 'fulfilment-search') {
+    state.fulfilmentSearch = event.target.value.trim().toLowerCase();
+    document.querySelectorAll('[data-order-row]').forEach((row) => {
+      row.hidden = !row.dataset.orderRow.includes(state.fulfilmentSearch);
+    });
+  }
+  if (event.target.id === 'returns-search') {
+    state.returnsSearch = event.target.value.trim().toLowerCase();
+    document.querySelectorAll('[data-return-card]').forEach((card) => {
+      card.hidden = !card.dataset.returnCard.includes(state.returnsSearch);
+    });
+  }
 });
 
 // Form Submissions
