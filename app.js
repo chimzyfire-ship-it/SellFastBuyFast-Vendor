@@ -681,10 +681,10 @@ function navItem(view, iconName, label, badgeCount) {
 
 function renderShellHtml() {
   const overview = state.overview;
-  const pendingFulfil = overview ? overview.fulfilment.awaitingAcceptance + overview.fulfilment.awaitingPacking : 0;
-  const pendingReturns = overview?.returnRequests.requested ?? 0;
+  const pendingFulfil = (overview?.fulfilment?.awaitingAcceptance ?? 0) + (overview?.fulfilment?.awaitingPacking ?? 0);
+  const pendingReturns = overview?.returnRequests?.requested ?? 0;
   const verification = overview?.verification?.status ?? 'pending';
-  const catalogueEnabled = overview?.merchant?.status === 'active';
+  const catalogueEnabled = (overview?.merchant?.status ?? state.merchant?.status) === 'active';
 
   return `
     <div class="portal-shell">
@@ -707,7 +707,7 @@ function renderShellHtml() {
             ${navItem('returns', 'rotate-ccw', 'Returns & Disputes', pendingReturns)}
 
             <div class="nav-section-label">Commerce</div>
-            ${navItem('catalogue', 'package', 'Catalogue & Stock', overview?.catalogue.total)}
+            ${navItem('catalogue', 'package', 'Catalogue & Stock', overview?.catalogue?.total ?? state.products.length)}
             ${navItem('add-product', 'plus-circle', 'Product Studio')}
 
             <div class="nav-section-label">Finance & Settings</div>
@@ -722,7 +722,7 @@ function renderShellHtml() {
             <div class="merchant-avatar">${escapeHtml((state.merchant?.businessName || 'S').charAt(0).toUpperCase())}</div>
             <div class="merchant-details">
               <div class="merchant-name">${escapeHtml(state.merchant?.businessName || 'Merchant Store')}</div>
-              <div class="merchant-role-badge">${icon('badge-check')} ${escapeHtml(overview?.viewer.memberRole || 'Member')}</div>
+              <div class="merchant-role-badge">${icon('badge-check')} ${escapeHtml(overview?.viewer?.memberRole || 'Owner')}</div>
             </div>
             <button type="button" class="btn-quiet" data-action="sign-out" title="Sign Out" style="color:rgba(255,255,255,0.7);padding:6px;">
               ${icon('log-out')}
@@ -791,7 +791,7 @@ function renderDashboardView() {
   const overview = state.overview;
   if (!overview) return renderSkeletonWorkspace();
 
-  const pendingCount = overview.fulfilment.awaitingAcceptance + overview.fulfilment.awaitingPacking;
+  const pendingCount = (overview?.fulfilment?.awaitingAcceptance ?? 0) + (overview?.fulfilment?.awaitingPacking ?? 0);
   const urgentOrders = state.orders.filter((o) => ['payment_confirmed', 'processing'].includes(o.status)).slice(0, 6);
 
   return `
@@ -816,7 +816,7 @@ function renderDashboardView() {
         </div>
         <div class="metric-value">${pendingCount}</div>
         <div class="metric-footer">
-          <span>${overview.fulfilment.awaitingAcceptance} to accept · ${overview.fulfilment.awaitingPacking} to pack</span>
+          <span>${overview?.fulfilment?.awaitingAcceptance ?? 0} to accept · ${overview?.fulfilment?.awaitingPacking ?? 0} to pack</span>
         </div>
       </div>
 
@@ -825,7 +825,7 @@ function renderDashboardView() {
           <span class="metric-title">In transit</span>
           <div class="metric-icon-box">${icon('truck')}</div>
         </div>
-        <div class="metric-value">${overview.fulfilment.inTransit}</div>
+        <div class="metric-value">${overview?.fulfilment?.inTransit ?? 0}</div>
         <div class="metric-footer">
           <span>Waiting for carrier delivery confirmation</span>
         </div>
@@ -836,9 +836,9 @@ function renderDashboardView() {
           <span class="metric-title">Active Catalogue</span>
           <div class="metric-icon-box">${icon('layers')}</div>
         </div>
-        <div class="metric-value">${overview.catalogue.published}</div>
+        <div class="metric-value">${overview?.catalogue?.published ?? state.products.length}</div>
         <div class="metric-footer">
-          <span>${overview.catalogue.draft} drafts · ${overview.catalogue.pendingApproval} in review</span>
+          <span>${overview?.catalogue?.draft ?? 0} drafts · ${overview?.catalogue?.pendingApproval ?? 0} in review</span>
         </div>
       </div>
 
@@ -847,9 +847,9 @@ function renderDashboardView() {
           <span class="metric-title">Return requests</span>
           <div class="metric-icon-box">${icon('rotate-ccw')}</div>
         </div>
-        <div class="metric-value">${overview.returnRequests.requested}</div>
+        <div class="metric-value">${overview?.returnRequests?.requested ?? 0}</div>
         <div class="metric-footer">
-          <span>${overview.returnRequests.open} open across all return stages</span>
+          <span>${overview?.returnRequests?.open ?? 0} open across all return stages</span>
         </div>
       </div>
     </div>
@@ -1240,7 +1240,7 @@ function renderPayoutsView() {
 function renderProfileView() {
   const m = state.overview?.merchant || state.merchant || {};
   const ver = state.overview?.verification || {};
-  const isOwner = state.overview?.viewer.isOwner ?? true;
+  const isOwner = state.overview?.viewer?.isOwner ?? true;
 
   return `
     <div class="page-header">
@@ -1614,14 +1614,36 @@ async function loadMerchantData() {
       }
 
       overviewVal = {
-        totalProducts: productsVal.length,
-        activeProducts: productsVal.filter((p) => p.status === 'published').length,
-        totalOrders: ordersVal.length,
-        pendingFulfilment: ordersVal.filter((o) => ['processing', 'payment_confirmed'].includes(o.status)).length,
-        completedOrders: ordersVal.filter((o) => o.status === 'completed').length,
-        settledTotalMinor: 0,
-        pendingSettlementMinor: 0,
-        verification: { status: 'approved' },
+        merchant: state.merchant || { status: 'active', businessName: 'SellFast Store' },
+        viewer: {
+          memberRole: state.merchant?.memberRole || 'owner',
+          isOwner: true,
+        },
+        catalogue: {
+          total: productsVal.length,
+          draft: productsVal.filter((p) => p.status === 'draft').length,
+          pendingApproval: productsVal.filter((p) => p.status === 'pending_approval').length,
+          published: productsVal.filter((p) => p.status === 'published').length,
+          archived: productsVal.filter((p) => p.status === 'archived').length,
+        },
+        fulfilment: {
+          awaitingAcceptance: ordersVal.filter((o) => o.status === 'payment_confirmed').length,
+          awaitingPacking: ordersVal.filter((o) => o.status === 'processing').length,
+          inTransit: ordersVal.filter((o) => o.status === 'in_transit').length,
+        },
+        returnRequests: {
+          open: returnsVal.filter((r) => ['requested', 'approved', 'received'].includes(r.status)).length,
+          requested: returnsVal.filter((r) => r.status === 'requested').length,
+        },
+        verification: {
+          status: 'approved',
+          rejectionReason: null,
+          updatedAt: new Date().toISOString(),
+        },
+        paymentModule: {
+          status: 'deferred',
+          message: 'Payouts, settlement balances, and bank-recipient setup are unavailable until the dedicated payment module is released.',
+        },
       };
 
       teamVal = [{
