@@ -5,8 +5,14 @@
 
 const root = document.getElementById('portal-root');
 
-// Runtime configuration is supplied by config.js locally or Vercel's public config endpoint.
-let config = { ...window.SFBF_VENDOR_CONFIG };
+// Runtime configuration is supplied by config.js locally, Vercel's public config endpoint, or project defaults.
+const defaultFallbackConfig = {
+  apiUrl: window.localStorage?.getItem('sfbf_api_url') || 'http://localhost:4000',
+  supabaseUrl: window.localStorage?.getItem('sfbf_supabase_url') || 'https://fuqrhfxptybipxbzveyy.supabase.co',
+  supabaseAnonKey: window.localStorage?.getItem('sfbf_supabase_anon_key') || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ1cXJoZnhwdHliaXB4Ynp2ZXl5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5NDY3MjYsImV4cCI6MjEwMzUyMjcyNn0.Q240FBpikqiWaGytkVP1RWVHGA-ZpvdVicY9qf4pvWw',
+};
+let config = { ...defaultFallbackConfig, ...window.SFBF_VENDOR_CONFIG };
+
 
 // Global Reactive State
 const state = {
