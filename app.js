@@ -1587,22 +1587,28 @@ function renderAddProductView() {
               <div style="font-size:11px;color:var(--ink-muted);display:flex;align-items:center;gap:4px;">
                 ${icon('store')} ${escapeHtml(storeName)} · ${escapeHtml(storeLga)}
               </div>
-              <div class="shopper-card-btn">
+              <button type="button" class="shopper-card-btn sim-interactive-btn" id="feed-add-bag-btn" data-action="sim-add-to-bag">
                 ${icon('shopping-bag')} Add to Bag
-              </div>
+              </button>
             </div>
           </div>
         </div>
 
         <!-- MOCKUP B: Product Detail View -->
-        <div id="mockup-detail-view" style="display:${previewMode === 'detail' ? 'block' : 'none'};">
-          <div class="shopper-detail-mock">
+        <div id="mockup-detail-view" style="display:${previewMode === 'detail' ? 'block' : 'none'};position:relative;">
+          <div class="shopper-detail-mock" id="shopper-detail-frame" style="position:relative;">
             <!-- App Bar -->
             <div class="shopper-detail-header">
-              <span style="color:var(--ink-secondary);display:flex;align-items:center;gap:4px;">${icon('chevron-left')} Back</span>
-              <div style="display:flex;gap:12px;color:var(--ink-secondary);">
-                <span>${icon('share-2')}</span>
-                <span>${icon('heart')}</span>
+              <button type="button" class="sim-icon-btn" data-action="set-preview-mode" data-mode="card" style="border:none;background:transparent;font-size:11.5px;color:var(--ink-secondary);display:flex;align-items:center;gap:4px;">
+                ${icon('chevron-left')} Feed
+              </button>
+              <div style="display:flex;gap:8px;color:var(--ink-secondary);">
+                <button type="button" class="sim-icon-btn" data-action="sim-share" title="Share listing">
+                  ${icon('share-2')}
+                </button>
+                <button type="button" class="sim-icon-btn ${state.simWishlist ? 'wishlist-active' : ''}" id="sim-wishlist-btn" data-action="sim-toggle-wishlist" title="Save to Wishlist">
+                  ${icon('heart')}
+                </button>
               </div>
             </div>
 
@@ -1640,9 +1646,9 @@ function renderAddProductView() {
                 <span style="font-size:11px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Select Size</span>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;" id="detail-sizes-row">
                   ${selectedSizes.map((sz, i) => `
-                    <span style="padding:4px 8px;border-radius:var(--radius-xs);border:1.5px solid ${i === 1 ? 'var(--forest-700)' : 'var(--border-medium)'};font-size:11px;font-weight:700;color:${i === 1 ? 'var(--forest-900)' : 'var(--ink-secondary)'};background:${i === 1 ? 'rgba(10,82,67,0.06)' : 'transparent'};">
-                      EU ${sz}
-                    </span>
+                    <button type="button" class="sim-size-pill ${sz === (state.simSelectedSize || selectedSizes[0]) ? 'active' : ''}" data-action="sim-select-size" data-size="${escapeAttribute(sz)}">
+                      EU ${escapeHtml(sz)}
+                    </button>
                   `).join('')}
                 </div>
               </div>
@@ -1666,12 +1672,12 @@ function renderAddProductView() {
 
               <!-- Mobile Bottom Action Buttons -->
               <div style="display:flex;gap:8px;margin-top:6px;">
-                <div style="flex:1;padding:8px 0;background:var(--page-subtle);border:1px solid var(--border-medium);border-radius:var(--radius-xs);font-size:11px;font-weight:700;text-align:center;color:var(--ink-primary);">
-                  Add to Bag
-                </div>
-                <div style="flex:1.5;padding:8px 0;background:var(--forest-900);border-radius:var(--radius-xs);font-size:11px;font-weight:700;text-align:center;color:#ffffff;">
-                  Buy Now with Escrow
-                </div>
+                <button type="button" class="sim-interactive-btn" id="detail-add-bag-btn" data-action="sim-add-to-bag" style="flex:1;padding:9px 0;background:var(--page-subtle);border:1px solid var(--border-medium);border-radius:var(--radius-xs);font-size:11.5px;font-weight:700;text-align:center;color:var(--ink-primary);display:flex;align-items:center;justify-content:center;gap:6px;">
+                  ${icon('shopping-bag')} Add to Bag
+                </button>
+                <button type="button" class="sim-interactive-btn" id="detail-buy-escrow-btn" data-action="sim-buy-escrow" style="flex:1.5;padding:9px 0;background:var(--forest-900);border-radius:var(--radius-xs);font-size:11.5px;font-weight:700;text-align:center;color:#ffffff;display:flex;align-items:center;justify-content:center;gap:6px;">
+                  ${icon('shield-check')} Buy with Escrow
+                </button>
               </div>
             </div>
           </div>
@@ -2923,19 +2929,167 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
+  // Simulator mini toast helper
+  function showSimToast(text) {
+    const parent = document.getElementById('shopper-detail-frame') || document.querySelector('.shopper-card-mock');
+    if (!parent) { showNotice(text); return; }
+    const existing = parent.querySelector('.sim-toast-overlay');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.className = 'sim-toast-overlay';
+    toast.innerHTML = text;
+    parent.appendChild(toast);
+    setTimeout(() => { toast.remove(); }, 2400);
+  }
+
+  if (action === 'sim-toggle-wishlist') {
+    state.simWishlist = !state.simWishlist;
+    button.classList.toggle('wishlist-active', state.simWishlist);
+    showSimToast(state.simWishlist ? '❤️ Added to Buyer Wishlist' : '💔 Removed from Wishlist');
+    return;
+  }
+
+  if (action === 'sim-share') {
+    showSimToast('🔗 Simulated: Product link copied to clipboard');
+    return;
+  }
+
+  if (action === 'sim-select-size') {
+    state.simSelectedSize = button.dataset.size;
+    document.querySelectorAll('.sim-size-pill').forEach((p) => {
+      p.classList.toggle('active', p.dataset.size === state.simSelectedSize);
+    });
+    showSimToast(`👟 Selected Size: EU ${state.simSelectedSize}`);
+    return;
+  }
+
+  if (action === 'sim-add-to-bag') {
+    const priceText = document.getElementById('detail-price-text')?.textContent || document.getElementById('preview-price-text')?.textContent || '₦45,000';
+    const originalText = button.innerHTML;
+    button.innerHTML = '✓ Added!';
+    showSimToast(`🛍️ Added to Cart · ${priceText}`);
+    setTimeout(() => { button.innerHTML = originalText; }, 1600);
+    return;
+  }
+
+  if (action === 'sim-buy-escrow') {
+    const priceText = document.getElementById('detail-price-text')?.textContent || '₦45,000';
+    showSimToast(`🔒 Escrow Checkout: ${priceText} held in SellFast ledger`);
+    return;
+  }
+
+  if (action === 'toggle-variant-pill') {
+    const checkedSizes = Array.from(document.querySelectorAll('input[name="variantSize"]:checked')).map((el) => el.value);
+    const checkedColors = Array.from(document.querySelectorAll('input[name="variantColor"]:checked')).map((el) => el.value);
+
+    if (!state.productDraft) state.productDraft = {};
+    state.productDraft.selectedSizes = checkedSizes.length > 0 ? checkedSizes : ['42'];
+    state.productDraft.selectedColors = checkedColors.length > 0 ? checkedColors : ['Black'];
+
+    const skuVal = document.getElementById('prod-sku')?.value || 'SFBF-SKU';
+    const priceVal = document.getElementById('prod-price')?.value || '45000';
+    const tbody = document.getElementById('variant-matrix-tbody');
+    if (tbody) {
+      let rowsHtml = '';
+      state.productDraft.selectedSizes.forEach((sz, idx) => {
+        const color = state.productDraft.selectedColors[0] || 'Black';
+        rowsHtml += `
+          <tr>
+            <td><strong>EU ${sz} / ${color}</strong></td>
+            <td><input class="variant-matrix-input" value="${skuVal}-${sz}" /></td>
+            <td><input class="variant-matrix-input" type="number" value="${priceVal}" /></td>
+            <td><input class="variant-matrix-input" type="number" value="${Math.max(2, 6 - idx)}" /></td>
+          </tr>`;
+      });
+      tbody.innerHTML = rowsHtml;
+    }
+
+    const detailSizes = document.getElementById('detail-sizes-row');
+    if (detailSizes) {
+      detailSizes.innerHTML = state.productDraft.selectedSizes.map((sz, i) => `
+        <button type="button" class="sim-size-pill ${i === 0 ? 'active' : ''}" data-action="sim-select-size" data-size="${sz}">
+          EU ${sz}
+        </button>
+      `).join('');
+    }
+    return;
+  }
+
   if (action === 'use-sample-image') {
     const titleInput = document.getElementById('prod-title');
     const brandInput = document.getElementById('prod-brand');
     const imgInput = document.getElementById('prod-image');
     const priceInput = document.getElementById('prod-price');
     const compareInput = document.getElementById('prod-compare-price');
+    const b1 = document.getElementById('prod-bullet1');
+    const b2 = document.getElementById('prod-bullet2');
+    const b3 = document.getElementById('prod-bullet3');
+    const desc = document.getElementById('prod-desc');
+    const weight = document.getElementById('prod-weight');
+    const dims = document.getElementById('prod-dims');
+
+    const presets = {
+      "Italian Leather Men's Oxford Shoes": {
+        brand: 'SellFast Signature',
+        price: '45000',
+        compare: '55000',
+        b1: '100% Genuine Handcrafted Italian Calfskin Leather',
+        b2: 'Cushioned Memory Foam Insole with Anti-Skid Rubber Sole',
+        b3: 'Reinforced Goodyear Welted Construction for Longevity',
+        desc: 'Expertly handcrafted from supple, premium full-grain leather, these Oxford shoes combine timeless elegance with day-long comfort. Designed for formal engagements, executive wear, and high-profile events.',
+        weight: '0.85',
+        dims: '33 × 21 × 12',
+      },
+      "Luxury Leather Structured Handbag": {
+        brand: 'Milano Leather',
+        price: '68000',
+        compare: '85000',
+        b1: 'Full-Grain Italian Cowhide with Gold-Tone Hardware',
+        b2: 'Spacious Interior with Padded Laptop & Tablet Sleeve',
+        b3: 'Detachable Adjustable Shoulder Strap with Dust Bag',
+        desc: 'An iconic structured tote handcrafted in Florence. Featuring rich grain leather, reinforced handles, and multiple organizational compartments for the modern professional woman.',
+        weight: '0.95',
+        dims: '38 × 28 × 15',
+      },
+      "Stainless Steel Chrono Smartwatch": {
+        brand: 'Apex Tech',
+        price: '32000',
+        compare: '40000',
+        b1: 'Ultra-Sharp 1.43" HD AMOLED Always-On Display',
+        b2: 'Continuous Heart Rate, Blood Oxygen & Sleep Tracker',
+        b3: 'IP68 Water Resistant with 10-Day Extended Battery Life',
+        desc: 'Engineered from surgical-grade stainless steel with sapphire glass. Connects seamlessly with iOS and Android devices, delivering call notifications and biometric health intelligence.',
+        weight: '0.35',
+        dims: '12 × 10 × 8',
+      },
+      "Artisan French Eau De Parfum 100ml": {
+        brand: 'Maison Paris',
+        price: '28000',
+        compare: '35000',
+        b1: 'Long-Lasting 24-Hour Eau de Parfum Concentration',
+        b2: 'Top Notes of Calabrian Bergamot & Ambergris Base',
+        b3: 'Hand-Blown Glass Flacon with Magnetic Cap',
+        desc: 'Distilled in Grasse, France using rare natural essences. Opens with fresh zesty citrus and settles into an alluring, hypnotic woody amber trail that lasts all day and night.',
+        weight: '0.45',
+        dims: '15 × 10 × 10',
+      },
+    };
+
+    const targetTitle = button.dataset.title;
+    const preset = presets[targetTitle] || {};
 
     if (button.dataset.url && imgInput) {
       imgInput.value = button.dataset.url;
-      if (titleInput && button.dataset.title) titleInput.value = button.dataset.title;
-      if (brandInput && button.dataset.brand) brandInput.value = button.dataset.brand;
-      if (priceInput && button.dataset.price) priceInput.value = button.dataset.price;
-      if (compareInput && button.dataset.compare) compareInput.value = button.dataset.compare;
+      if (titleInput && targetTitle) titleInput.value = targetTitle;
+      if (brandInput && (preset.brand || button.dataset.brand)) brandInput.value = preset.brand || button.dataset.brand;
+      if (priceInput && (preset.price || button.dataset.price)) priceInput.value = preset.price || button.dataset.price;
+      if (compareInput && (preset.compare || button.dataset.compare)) compareInput.value = preset.compare || button.dataset.compare;
+      if (b1 && preset.b1) b1.value = preset.b1;
+      if (b2 && preset.b2) b2.value = preset.b2;
+      if (b3 && preset.b3) b3.value = preset.b3;
+      if (desc && preset.desc) desc.value = preset.desc;
+      if (weight && preset.weight) weight.value = preset.weight;
+      if (dims && preset.dims) dims.value = preset.dims;
 
       imgInput.dispatchEvent(new Event('input', { bubbles: true }));
       if (titleInput) titleInput.dispatchEvent(new Event('input', { bubbles: true }));
