@@ -28,6 +28,8 @@ const state = {
   categories: [],
   activeView: 'dashboard',
   catalogueFilter: 'all',
+  catalogueSearch: '',
+  editingProductId: null,
   fulfilmentFilter: 'all',
   fulfilmentSearch: '',
   returnsFilter: 'all',
@@ -912,70 +914,168 @@ function renderDashboardView() {
 function renderCatalogueView() {
   const categoryMap = new Map(state.categories.map((c) => [c.id, c.name]));
   const catalogueEnabled = state.overview?.merchant?.status === 'active';
-  let filtered = state.products;
+  const currentFilter = state.catalogueFilter || 'all';
+  const searchTerm = (state.catalogueSearch || '').toLowerCase();
 
-  if (state.catalogueFilter === 'published') filtered = filtered.filter((p) => p.status === 'published');
-  else if (state.catalogueFilter === 'in_review') filtered = filtered.filter((p) => p.status === 'pending_approval');
-  else if (state.catalogueFilter === 'draft') filtered = filtered.filter((p) => p.status === 'draft');
+  const totalCount = state.products.length;
+  const publishedCount = state.products.filter((p) => p.status === 'published').length;
+  const inReviewCount = state.products.filter((p) => p.status === 'pending_approval').length;
+  const draftCount = state.products.filter((p) => p.status === 'draft').length;
+  const lowStockCount = state.products.filter((p) => (p.variants?.[0]?.availableQuantity ?? 0) <= 3).length;
+  const totalUnits = state.products.reduce((s, p) => s + (p.variants?.[0]?.availableQuantity ?? 0), 0);
+
+  let filtered = state.products;
+  if (currentFilter === 'published') filtered = filtered.filter((p) => p.status === 'published');
+  else if (currentFilter === 'in_review') filtered = filtered.filter((p) => p.status === 'pending_approval');
+  else if (currentFilter === 'draft') filtered = filtered.filter((p) => p.status === 'draft');
+  else if (currentFilter === 'low-stock') filtered = filtered.filter((p) => (p.variants?.[0]?.availableQuantity ?? 0) <= 3);
+
+  if (searchTerm) {
+    filtered = filtered.filter((p) => {
+      const categoryName = categoryMap.get(p.categoryId) || '';
+      const sku = p.variants?.[0]?.sku || '';
+      return `${p.title} ${sku} ${categoryName}`.toLowerCase().includes(searchTerm);
+    });
+  }
 
   const rows = filtered.map((product) => {
     const variant = product.variants?.[0];
     const image = safeUrl(product.media?.find((m) => m.mediaType === 'image')?.mediaUrl);
-    const stock = variant ? `${variant.availableQuantity} available` : '0 units';
+    const qty = variant?.availableQuantity ?? 0;
+    const reserved = variant?.reservedQuantity ?? 0;
+
+    let stockBadgeClass = 'status-pill-success';
+    let stockText = `${qty} in stock`;
+    if (qty === 0) {
+      stockBadgeClass = 'status-pill-danger';
+      stockText = 'Out of Stock';
+    } else if (qty <= 3) {
+      stockBadgeClass = 'status-pill-warning';
+      stockText = `Low Stock: ${qty} left`;
+    }
 
     return `
       <tr data-product-row="${escapeAttribute((product.title + ' ' + (variant?.sku || '')).toLowerCase())}">
         <td>
           <div style="display:flex;align-items:center;gap:12px;">
-            ${image ? `<img src="${escapeAttribute(image)}" alt="" style="width:40px;height:40px;border-radius:8px;object-fit:cover;border:1px solid var(--border-light);" />` : `<div style="width:40px;height:40px;border-radius:8px;background:var(--page-subtle);display:flex;align-items:center;justify-content:center;color:var(--forest-800);">${icon('package')}</div>`}
+            ${image ? `<img src="${escapeAttribute(image)}" alt="" style="width:44px;height:44px;border-radius:8px;object-fit:cover;border:1px solid var(--border-light);background:var(--page-subtle);" />` : `<div style="width:44px;height:44px;border-radius:8px;background:var(--page-subtle);display:flex;align-items:center;justify-content:center;color:var(--forest-800);">${icon('package')}</div>`}
             <div>
-              <div class="table-main-text">${escapeHtml(product.title)}</div>
-              <div class="table-sub-text">SKU: ${escapeHtml(variant?.sku || 'No SKU')}</div>
+              <div class="table-main-text" style="font-size:14px;">${escapeHtml(product.title)}</div>
+              <div class="table-sub-text">SKU: <strong style="color:var(--ink-secondary);">${escapeHtml(variant?.sku || 'No SKU')}</strong></div>
             </div>
           </div>
         </td>
-        <td>${escapeHtml(categoryMap.get(product.categoryId) || 'General')}</td>
-        <td><strong>${variant ? formatNaira(variant.priceMinor) : '—'}</strong></td>
         <td>
-          <span style="font-weight:600;color:${variant?.availableQuantity <= 3 ? 'var(--rose-600)' : 'inherit'};">
-            ${escapeHtml(stock)}
+          <span style="display:inline-block;padding:2px 8px;border-radius:var(--radius-xs);background:var(--page-subtle);font-size:12px;font-weight:600;color:var(--ink-secondary);">
+            ${escapeHtml(categoryMap.get(product.categoryId) || 'General')}
           </span>
-          ${variant?.reservedQuantity ? `<div class="table-sub-text">${variant.reservedQuantity} reserved</div>` : ''}
+        </td>
+        <td>
+          <strong style="font-family:var(--font-numbers);font-size:14.5px;color:var(--forest-950);">
+            ${variant ? formatNaira(variant.priceMinor) : '—'}
+          </strong>
+        </td>
+        <td>
+          <div>
+            <span class="status-pill ${stockBadgeClass}" style="font-size:11.5px;">
+              ${escapeHtml(stockText)}
+            </span>
+            ${reserved > 0 ? `<div class="table-sub-text" style="color:var(--gold-600);font-weight:600;margin-top:2px;">${reserved} reserved</div>` : ''}
+          </div>
         </td>
         <td>${statusBadge(product.status)}</td>
         <td>
           <div class="table-actions">
-            ${variant ? `<button class="btn btn-secondary btn-sm" type="button" data-action="edit-stock" data-variant-id="${escapeAttribute(variant.id)}" data-quantity="${escapeAttribute(variant.availableQuantity)}" ${catalogueEnabled ? '' : 'disabled'}>${icon('sliders')} Update stock</button>` : ''}
-            ${product.status === 'draft' ? `<button class="btn btn-primary btn-sm" type="button" data-action="submit-product" data-product-id="${escapeAttribute(product.id)}" ${catalogueEnabled ? '' : 'disabled'}>${icon('send')} Submit for review</button>` : ''}
+            ${variant ? `
+              <button class="btn btn-secondary btn-sm" type="button" data-action="edit-stock" data-variant-id="${escapeAttribute(variant.id)}" data-product-title="${escapeAttribute(product.title)}" data-sku="${escapeAttribute(variant.sku || '')}" data-quantity="${escapeAttribute(variant.availableQuantity)}" ${catalogueEnabled ? '' : 'disabled'} title="Adjust live available stock">
+                ${icon('sliders')} Stock
+              </button>
+            ` : ''}
+            <button class="btn btn-quiet btn-sm" type="button" data-action="edit-product" data-product-id="${escapeAttribute(product.id)}" title="Edit product specifications">
+              ${icon('edit-3')} Edit
+            </button>
+            ${product.status === 'draft' ? `
+              <button class="btn btn-primary btn-sm" type="button" data-action="submit-product" data-product-id="${escapeAttribute(product.id)}" ${catalogueEnabled ? '' : 'disabled'} title="Submit for Operations moderation">
+                ${icon('send')} Submit
+              </button>
+            ` : ''}
           </div>
         </td>
       </tr>`;
   }).join('');
 
   return `
-    <div class="page-header">
+    <div class="view-header">
       <div>
-        <h1 class="page-title">Catalogue & Stock</h1>
-        <p class="page-subtitle">Manage listings, set live quantities, and submit new items for moderation.</p>
+        <h1 class="view-title">Catalogue & Stock</h1>
+        <p class="view-subtitle">Manage listings, live quantities, and submit items for Operations moderation.</p>
       </div>
-      <button class="btn btn-primary" type="button" data-action="navigate" data-view="add-product" ${catalogueEnabled ? '' : 'disabled'}>
+      <button class="btn btn-primary btn-sm" type="button" data-action="new-product" ${catalogueEnabled ? '' : 'disabled'}>
         ${icon('plus')} Add New Product
       </button>
     </div>
 
-    ${catalogueEnabled ? '' : `<div class="error-summary" role="status">${icon('clock')} <span>Catalogue changes unlock after Operations approves this merchant verification.</span></div>`}
+    ${catalogueEnabled ? '' : `<div class="error-summary" role="status" style="margin-bottom:20px;">${icon('clock')} <span>Catalogue changes unlock after Operations approves this merchant verification.</span></div>`}
 
-    <div class="card">
-      <div class="card-header">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-sm ${state.catalogueFilter === 'all' ? 'btn-primary' : 'btn-secondary'}" type="button" data-action="set-catalogue-filter" data-filter="all">All (${state.products.length})</button>
-          <button class="btn btn-sm ${state.catalogueFilter === 'published' ? 'btn-primary' : 'btn-secondary'}" type="button" data-action="set-catalogue-filter" data-filter="published">Published</button>
-          <button class="btn btn-sm ${state.catalogueFilter === 'in_review' ? 'btn-primary' : 'btn-secondary'}" type="button" data-action="set-catalogue-filter" data-filter="in_review">In Review</button>
-          <button class="btn btn-sm ${state.catalogueFilter === 'draft' ? 'btn-primary' : 'btn-secondary'}" type="button" data-action="set-catalogue-filter" data-filter="draft">Drafts</button>
+    <!-- KPI Summary Cards -->
+    <div class="catalogue-kpis">
+      <div class="catalogue-kpi-card">
+        <div class="catalogue-kpi-icon">${icon('package')}</div>
+        <div class="catalogue-kpi-content">
+          <div class="catalogue-kpi-val">${totalCount}</div>
+          <div class="catalogue-kpi-label">Listings</div>
         </div>
-        <input class="input" id="catalogue-search" style="max-width:240px;min-height:38px;" type="search" placeholder="Search title or SKU…" aria-label="Search catalogue" />
+      </div>
+      <div class="catalogue-kpi-card">
+        <div class="catalogue-kpi-icon">${icon('boxes')}</div>
+        <div class="catalogue-kpi-content">
+          <div class="catalogue-kpi-val">${totalUnits}</div>
+          <div class="catalogue-kpi-label">Units in Stock</div>
+        </div>
+      </div>
+      <div class="catalogue-kpi-card">
+        <div class="catalogue-kpi-icon ${lowStockCount > 0 ? 'warn' : ''}">${icon('alert-triangle')}</div>
+        <div class="catalogue-kpi-content">
+          <div class="catalogue-kpi-val" style="${lowStockCount > 0 ? 'color:var(--gold-600);' : ''}">${lowStockCount}</div>
+          <div class="catalogue-kpi-label">Low Stock (≤ 3)</div>
+        </div>
+      </div>
+      <div class="catalogue-kpi-card">
+        <div class="catalogue-kpi-icon">${icon('clock')}</div>
+        <div class="catalogue-kpi-content">
+          <div class="catalogue-kpi-val">${inReviewCount}</div>
+          <div class="catalogue-kpi-label">In Moderation</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filter & Search Controls -->
+    <div class="filter-search-bar">
+      <div class="filter-pills-wrap">
+        <button class="filter-pill ${currentFilter === 'all' ? 'active' : ''}" type="button" data-action="set-catalogue-filter" data-filter="all">
+          All <span class="filter-count">${totalCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'published' ? 'active' : ''}" type="button" data-action="set-catalogue-filter" data-filter="published">
+          Published <span class="filter-count">${publishedCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'low-stock' ? 'active' : ''}" type="button" data-action="set-catalogue-filter" data-filter="low-stock">
+          Low Stock <span class="filter-count ${lowStockCount > 0 ? 'warn' : ''}">${lowStockCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'in_review' ? 'active' : ''}" type="button" data-action="set-catalogue-filter" data-filter="in_review">
+          In Review <span class="filter-count">${inReviewCount}</span>
+        </button>
+        <button class="filter-pill ${currentFilter === 'draft' ? 'active' : ''}" type="button" data-action="set-catalogue-filter" data-filter="draft">
+          Drafts <span class="filter-count">${draftCount}</span>
+        </button>
       </div>
 
+      <div class="search-input-wrap">
+        ${icon('search')}
+        <input class="search-input" id="catalogue-search" type="text" placeholder="Search title, SKU, or category…" value="${escapeAttribute(state.catalogueSearch || '')}" />
+      </div>
+    </div>
+
+    <div class="card">
       <div class="table-container">
         <table class="data-table">
           <thead>
@@ -989,7 +1089,7 @@ function renderCatalogueView() {
             </tr>
           </thead>
           <tbody>
-            ${rows || `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon-wrap">${icon('package-open')}</div><h3 class="empty-title">No products found</h3><p class="empty-text">Add your first catalog item with photos, specifications, and stock.</p><button class="btn btn-primary" type="button" data-action="navigate" data-view="add-product">${icon('plus')} Add Product</button></div></td></tr>`}
+            ${rows || `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon-wrap">${icon('package-open')}</div><h3 class="empty-title">No products match this filter</h3><p class="empty-text">Add your first catalog item or clear your search.</p><button class="btn btn-primary btn-sm" type="button" data-action="new-product">${icon('plus')} Add Product</button></div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -997,105 +1097,202 @@ function renderCatalogueView() {
 }
 
 /* ==========================================================================
-   VIEW 3: PRODUCT STUDIO (ADD PRODUCT)
+   VIEW 3: PRODUCT STUDIO (ADD / EDIT PRODUCT WITH LIVE PREVIEW)
    ========================================================================== */
 
 function renderAddProductView() {
   const categoryOptions = state.categories.map((c) => `<option value="${escapeAttribute(c.id)}">${escapeHtml(c.name)}</option>`).join('');
   const catalogueEnabled = state.overview?.merchant?.status === 'active';
   const canCreate = catalogueEnabled && state.categories.length > 0;
+  const isEditing = Boolean(state.editingProductId);
+  const draft = state.productDraft || {};
+
+  // Form values (default or editing)
+  const title = draft.title || '';
+  const categoryId = draft.categoryId || '';
+  const sku = draft.sku || '';
+  const priceNaira = draft.priceNaira || '';
+  const comparePriceNaira = draft.comparePriceNaira || '';
+  const availableQuantity = draft.availableQuantity || '10';
+  const description = draft.description || '';
+  const imageUrl = draft.imageUrl || '';
+  const submitForReview = draft.submitForReview !== false;
+
+  // Live preview computations
+  const previewImg = safeUrl(imageUrl) || 'assets/product-sneakers-arch.jpg';
+  const previewTitle = title || 'Italian Leather Men\'s Oxford Shoes';
+  const selectedCat = state.categories.find((c) => c.id === categoryId)?.name || 'Footwear & Fashion';
+  const previewPrice = priceNaira ? formatNaira(Number(priceNaira) * 100) : '₦45,000';
+  const previewCompare = comparePriceNaira ? formatNaira(Number(comparePriceNaira) * 100) : '';
+  const discountPercent = (Number(comparePriceNaira) > Number(priceNaira) && Number(priceNaira) > 0)
+    ? Math.round(((Number(comparePriceNaira) - Number(priceNaira)) / Number(comparePriceNaira)) * 100)
+    : 0;
+  const qtyNum = Number(availableQuantity) || 0;
+  const storeName = state.merchant?.businessName || 'SellFast Official Store';
+  const storeLga = state.merchant?.lga || 'Lagos';
 
   return `
-    <div class="page-header">
+    <div class="view-header">
       <div>
-        <h1 class="page-title">Product Studio</h1>
-        <p class="page-subtitle">Create a draft or submit a product for Operations moderation. Customer search updates only after approval.</p>
+        <h1 class="view-title">${isEditing ? 'Edit Product Listing' : 'Product Studio'}</h1>
+        <p class="view-subtitle">${isEditing ? 'Update specifications, pricing, or stock for this listing.' : 'Create a draft or submit a product for Operations moderation.'}</p>
       </div>
-      <button class="btn btn-secondary" type="button" data-action="navigate" data-view="catalogue">
-        ${icon('arrow-left')} Back to Catalogue
-      </button>
-    </div>
-
-    <form class="card" id="product-form" novalidate>
-      <div class="card-header">
-        <div>
-          <h2 class="card-title">Product Specifications</h2>
-          <p class="card-subtitle">Fill in accurate details to ensure speedy moderation approval.</p>
-        </div>
-      </div>
-
-      <div class="card-body">
-        ${state.formError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.formError)}</span></div>` : ''}
-        ${catalogueEnabled ? (state.categories.length ? '' : `<div class="error-summary" role="alert">${icon('alert-circle')} <span>Product categories are unavailable. Refresh the workspace before adding a product.</span></div>`) : `<div class="error-summary" role="status">${icon('clock')} <span>Product creation unlocks after Operations approves this merchant verification.</span></div>`}
-
-        <div class="grid-2col">
-          <!-- Left Column -->
-          <div>
-            <div class="form-group">
-              <label class="form-label" for="prod-title">Product Title</label>
-              <input class="input" id="prod-title" name="title" placeholder="e.g. Italian Leather Men's Oxford Shoes" required />
-            </div>
-
-            <div class="grid-2col">
-              <div class="form-group">
-                <label class="form-label" for="prod-category">Category</label>
-                <select class="select" id="prod-category" name="categoryId" required ${canCreate ? '' : 'disabled'}>
-                  <option value="">Select Category</option>
-                  ${categoryOptions}
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="prod-sku">Merchant SKU</label>
-                <input class="input" id="prod-sku" name="sku" placeholder="SFBF-SHOES-01" required />
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="prod-desc">Description & Specifications</label>
-              <textarea class="textarea" id="prod-desc" name="description" placeholder="Describe materials, size guide, warranty, and authentic features…" required></textarea>
-              <span class="field-help">Clear descriptions reduce customer returns by over 40%.</span>
-            </div>
-          </div>
-
-          <!-- Right Column -->
-          <div>
-            <div class="grid-2col">
-              <div class="form-group">
-                <label class="form-label" for="prod-price">Retail Price (₦ NGN)</label>
-                <input class="input" id="prod-price" name="priceNaira" type="number" min="100" step="100" placeholder="e.g. 45000" required />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="prod-stock">Initial Stock Quantity</label>
-                <input class="input" id="prod-stock" name="availableQuantity" type="number" min="1" step="1" placeholder="e.g. 10" required />
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="prod-image">High-Resolution Image URL</label>
-              <input class="input" id="prod-image" name="imageUrl" type="url" placeholder="https://your-image-host.example/product.jpg" required />
-              <span class="field-help">Use clean studio product photos with light or white backgrounds.</span>
-            </div>
-
-            <div style="background:var(--page-subtle);padding:16px;border-radius:var(--radius-md);border:1px solid var(--border-light);margin-top:16px;">
-              <label class="checkbox-row" style="margin:0;">
-                <input type="checkbox" name="submitForReview" checked />
-                <span>
-                  <strong>Submit for Operations moderation</strong><br />
-                  <small style="color:var(--ink-muted);">Customer search updates only after Operations publishes the approved item.</small>
-                </span>
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn btn-secondary" type="button" data-action="navigate" data-view="catalogue">Cancel</button>
-        <button class="btn btn-primary" type="submit" ${state.busy === 'create-product' || !canCreate ? 'disabled' : ''}>
-          ${state.busy === 'create-product' ? 'Saving…' : `${icon('save')} Save product`}
+      <div style="display:flex;gap:10px;align-items:center;">
+        ${isEditing ? `
+          <button class="btn btn-quiet btn-sm" type="button" data-action="new-product">
+            ${icon('plus')} Create New Instead
+          </button>
+        ` : ''}
+        <button class="btn btn-secondary btn-sm" type="button" data-action="navigate" data-view="catalogue">
+          ${icon('arrow-left')} Back to Catalogue
         </button>
       </div>
-    </form>`;
+    </div>
+
+    ${catalogueEnabled ? '' : `<div class="error-summary" role="status" style="margin-bottom:20px;">${icon('clock')} <span>Product creation unlocks after Operations approves this merchant verification.</span></div>`}
+
+    <div class="studio-grid">
+      <!-- Left Column: Form -->
+      <form class="card" id="product-form" novalidate>
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">${isEditing ? 'Update Specifications' : 'Product Specifications'}</h2>
+            <p class="card-subtitle">Fill in accurate details to ensure speedy moderation approval.</p>
+          </div>
+          ${isEditing ? `<span class="status-pill status-pill-warning">${icon('edit-3')} Editing Product</span>` : ''}
+        </div>
+
+        <div class="card-body">
+          ${state.formError ? `<div class="error-summary" role="alert" style="margin-bottom:18px;">${icon('alert-circle')} <span>${escapeHtml(state.formError)}</span></div>` : ''}
+
+          <div class="form-group">
+            <label class="form-label" for="prod-title">
+              <span>Product Title</span>
+              <span class="field-help"><span id="title-char-count">${title.length}</span>/180</span>
+            </label>
+            <input class="input" id="prod-title" name="title" placeholder="e.g. Italian Leather Men's Oxford Shoes" value="${escapeAttribute(title)}" maxlength="180" required />
+          </div>
+
+          <div class="grid-2col">
+            <div class="form-group">
+              <label class="form-label" for="prod-category">Category</label>
+              <select class="select" id="prod-category" name="categoryId" required ${canCreate ? '' : 'disabled'}>
+                <option value="">Select Category</option>
+                ${state.categories.map((c) => `<option value="${escapeAttribute(c.id)}" ${c.id === categoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="prod-sku">Merchant SKU</label>
+              <input class="input" id="prod-sku" name="sku" placeholder="SFBF-SHOES-01" value="${escapeAttribute(sku)}" required />
+            </div>
+          </div>
+
+          <div class="grid-2col">
+            <div class="form-group">
+              <label class="form-label" for="prod-price">Retail Price (₦ NGN)</label>
+              <input class="input" id="prod-price" name="priceNaira" type="number" min="100" step="100" placeholder="e.g. 45000" value="${escapeAttribute(priceNaira)}" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="prod-compare-price">
+                <span>Compare-at Price (Optional)</span>
+                <span class="field-help">Strike-through discount</span>
+              </label>
+              <input class="input" id="prod-compare-price" name="comparePriceNaira" type="number" min="100" step="100" placeholder="e.g. 55000" value="${escapeAttribute(comparePriceNaira)}" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="prod-stock">Available Quantity in Stock</label>
+            <input class="input" id="prod-stock" name="availableQuantity" type="number" min="0" step="1" placeholder="e.g. 10" value="${escapeAttribute(availableQuantity)}" required />
+            <span class="field-help">Units immediately reserved during shopper checkout to prevent overselling.</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="prod-desc">Description & Specifications</label>
+            <textarea class="textarea" id="prod-desc" name="description" placeholder="Describe materials, size options, warranty, and authentic features…" style="min-height:120px;" required>${escapeHtml(description)}</textarea>
+            <span class="field-help">Detailed specifications reduce customer return disputes by over 40%.</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="prod-image">High-Resolution Image URL</label>
+            <input class="input" id="prod-image" name="imageUrl" type="url" placeholder="https://your-image-host.example/photo.jpg" value="${escapeAttribute(imageUrl)}" required />
+            <div class="image-preset-pills">
+              <span style="font-size:11.5px;color:var(--ink-muted);margin-right:2px;">Quick Sample Photos:</span>
+              <button type="button" class="image-preset-pill" data-action="use-sample-image" data-title="Italian Leather Oxford Shoes" data-url="assets/product-sneakers-arch.jpg">Men's Shoes</button>
+              <button type="button" class="image-preset-pill" data-action="use-sample-image" data-title="Luxury Leather Structured Handbag" data-url="assets/product-handbag-arch.jpg">Leather Handbag</button>
+              <button type="button" class="image-preset-pill" data-action="use-sample-image" data-title="Stainless Steel Chrono Smartwatch" data-url="assets/product-smartwatch-arch.jpg">Smartwatch</button>
+              <button type="button" class="image-preset-pill" data-action="use-sample-image" data-title="Artisan French Eau De Parfum 100ml" data-url="assets/product-perfume-arch.jpg">Perfume</button>
+            </div>
+          </div>
+
+          <div style="background:var(--page-subtle);padding:16px;border-radius:var(--radius-md);border:1px solid var(--border-light);margin-top:16px;">
+            <label class="checkbox-row" style="margin:0;">
+              <input type="checkbox" name="submitForReview" id="prod-submit-review" ${submitForReview ? 'checked' : ''} />
+              <span>
+                <strong>Submit for Operations Moderation Immediately</strong><br />
+                <small style="color:var(--ink-muted);">Verified moderators approve listings in 2–4 business hours. Uncheck to keep as private draft.</small>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-footer" style="padding:16px 24px;">
+          <button class="btn btn-secondary" type="button" data-action="navigate" data-view="catalogue">Cancel</button>
+          <button class="btn btn-primary" type="submit" ${state.busy === 'create-product' || !canCreate ? 'disabled' : ''}>
+            ${state.busy === 'create-product' ? 'Saving…' : `${icon('save')} ${isEditing ? 'Save Changes' : (submitForReview ? 'Save & Submit for Review' : 'Save as Draft')}`}
+          </button>
+        </div>
+      </form>
+
+      <!-- Right Column: Live Shopper Preview -->
+      <div class="shopper-preview-sticky">
+        <div style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:12.5px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;letter-spacing:0.05em;display:flex;align-items:center;gap:6px;">
+            ${icon('smartphone')} Shopper Mobile Preview
+          </span>
+          <span class="status-pill status-pill-success" style="font-size:11px;">Live Sync</span>
+        </div>
+
+        <!-- Phone Mockup Frame -->
+        <div class="shopper-card-mock">
+          <div class="shopper-card-img-wrap">
+            <img src="${escapeAttribute(previewImg)}" alt="${escapeAttribute(previewTitle)}" class="shopper-card-img" id="preview-card-img" onerror="this.src='assets/product-sneakers-arch.jpg'" />
+            <div class="shopper-badge-discount" id="preview-discount-badge" style="display:${discountPercent > 0 ? 'inline-block' : 'none'};">
+              <span id="preview-discount-val">${discountPercent}</span>% OFF
+            </div>
+            <div class="shopper-badge-verified">
+              ${icon('shield-check')} Verified
+            </div>
+          </div>
+
+          <div class="shopper-card-body">
+            <div class="shopper-card-category" id="preview-cat-text">${escapeHtml(selectedCat)}</div>
+            <h3 class="shopper-card-title" id="preview-title-text">${escapeHtml(previewTitle)}</h3>
+            <div class="shopper-card-pricing">
+              <span class="shopper-card-price" id="preview-price-text">${escapeHtml(previewPrice)}</span>
+              <span class="shopper-card-compare" id="preview-compare-text" style="display:${previewCompare ? 'inline' : 'none'};">${escapeHtml(previewCompare)}</span>
+            </div>
+            <div class="shopper-card-stock">
+              <span class="shopper-stock-dot ${qtyNum === 0 ? 'danger' : (qtyNum <= 3 ? 'warn' : '')}" id="preview-stock-dot"></span>
+              <span id="preview-stock-text" style="color:${qtyNum === 0 ? 'var(--rose-600)' : (qtyNum <= 3 ? 'var(--gold-600)' : 'var(--ink-secondary)')};">
+                ${qtyNum === 0 ? 'Out of Stock' : (qtyNum <= 3 ? `Only ${qtyNum} left` : 'In Stock')}
+              </span>
+            </div>
+            <div style="font-size:11px;color:var(--ink-muted);display:flex;align-items:center;gap:4px;">
+              ${icon('store')} ${escapeHtml(storeName)} · ${escapeHtml(storeLga)}
+            </div>
+            <div class="shopper-card-btn">
+              ${icon('shopping-bag')} Add to Bag
+            </div>
+          </div>
+        </div>
+
+        <!-- Escrow reassurance note -->
+        <div style="margin-top:14px;padding:12px 14px;background:var(--page-subtle);border-radius:var(--radius-md);border:1px solid var(--border-light);font-size:12px;color:var(--ink-muted);line-height:1.45;">
+          ${icon('lock')} Customer orders on SellFastBuyFast are held in escrow until carrier delivery proof + 7-day buyer return window.
+        </div>
+      </div>
+    </div>`;
 }
 
 /* ==========================================================================
@@ -1612,22 +1809,38 @@ function renderModal() {
   const error = state.formError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.formError)}</span></div>` : '';
 
   if (state.modal.type === 'stock') {
+    const title = state.modal.productTitle || 'Product Variant';
+    const sku = state.modal.sku || '';
+    const qty = Number(state.modal.quantity) || 0;
+
     return `
       <div class="modal-backdrop" data-action="close-modal">
         <form class="modal-dialog" id="stock-form" onclick="event.stopPropagation()">
           <div class="modal-header">
             <div>
               <h3 class="modal-title">Update Stock Quantity</h3>
-              <p class="table-sub-text">Live available units on customer marketplace.</p>
+              <p class="table-sub-text">${escapeHtml(title)} ${sku ? `· SKU: ${escapeHtml(sku)}` : ''}</p>
             </div>
             <button class="modal-close-btn" type="button" data-action="close-modal">${icon('x')}</button>
           </div>
           <div class="modal-body">
             ${error}
             <input type="hidden" name="variantId" value="${escapeAttribute(state.modal.variantId)}" />
+            
             <div class="form-group">
-              <label class="form-label" for="modal-stock-qty">Available Stock</label>
-              <input class="input" id="modal-stock-qty" name="availableQuantity" type="number" min="0" step="1" value="${escapeAttribute(state.modal.quantity)}" required />
+              <label class="form-label" for="modal-stock-qty">Available Stock Units</label>
+              <input class="input" id="modal-stock-qty" name="availableQuantity" type="number" min="0" step="1" value="${escapeAttribute(qty)}" required style="font-family:var(--font-numbers);font-size:18px;font-weight:700;" />
+              <span class="field-help">Real-time inventory available for customer purchase.</span>
+            </div>
+
+            <div class="stock-stepper-row">
+              <span style="font-size:12px;font-weight:600;color:var(--ink-muted);margin-right:4px;">Quick Adjust:</span>
+              <button type="button" class="stock-step-btn" data-action="adjust-stock-step" data-delta="-5">-5</button>
+              <button type="button" class="stock-step-btn" data-action="adjust-stock-step" data-delta="-1">-1</button>
+              <button type="button" class="stock-step-btn" data-action="adjust-stock-step" data-delta="1">+1</button>
+              <button type="button" class="stock-step-btn" data-action="adjust-stock-step" data-delta="5">+5</button>
+              <button type="button" class="stock-step-btn" data-action="adjust-stock-step" data-delta="10">+10</button>
+              <button type="button" class="stock-step-btn danger" data-action="adjust-stock-step" data-set="0">Out of Stock</button>
             </div>
           </div>
           <div class="modal-footer">
@@ -1883,118 +2096,26 @@ async function loadMerchantData() {
     let teamVal = [];
     let categoriesVal = [];
 
-    try {
-      const results = await Promise.allSettled([
-        api(`/v1/vendor/merchant/${merchantId}/overview`, { signal: controller.signal }),
-        api(`/v1/catalog-management/merchant/${merchantId}/products`, { signal: controller.signal }),
-        api(`/v1/fulfilment/merchant/${merchantId}/orders`, { signal: controller.signal }),
-        api(`/v1/vendor/merchant/${merchantId}/returns`, { signal: controller.signal }),
-        api(`/v1/vendor/merchant/${merchantId}/team`, { signal: controller.signal }),
-        api('/v1/catalog/categories', { signal: controller.signal }),
-      ]);
-      if (requestVersion !== state.dataRequestVersion) return;
+    const results = await Promise.allSettled([
+      api(`/v1/vendor/merchant/${merchantId}/overview`, { signal: controller.signal }),
+      api(`/v1/catalog-management/merchant/${merchantId}/products`, { signal: controller.signal }),
+      api(`/v1/fulfilment/merchant/${merchantId}/orders`, { signal: controller.signal }),
+      api(`/v1/vendor/merchant/${merchantId}/returns`, { signal: controller.signal }),
+      api(`/v1/vendor/merchant/${merchantId}/team`, { signal: controller.signal }),
+      api('/v1/catalog/categories', { signal: controller.signal }),
+    ]);
+    if (requestVersion !== state.dataRequestVersion) return;
 
-      const [overview, products, orders, returns, team, categories] = results;
-      if (overview.status === 'fulfilled') overviewVal = overview.value;
-      if (products.status === 'fulfilled') productsVal = products.value;
-      if (orders.status === 'fulfilled') ordersVal = orders.value;
-      if (returns.status === 'fulfilled') returnsVal = returns.value;
-      if (team.status === 'fulfilled') teamVal = team.value;
-      if (categories.status === 'fulfilled') categoriesVal = categories.value;
-    } catch (apiErr) {
-      console.warn('Core API unreachable, falling back to direct Supabase data:', apiErr);
-    }
-
-    // Direct Supabase fallback if Core API calls didn't fulfill overview or products
-    if (!overviewVal && state.client) {
-      const [pRes, oRes, cRes] = await Promise.all([
-        state.client.from('products').select('*, product_variants(*), product_media(*)').eq('merchant_id', merchantId),
-        state.client.from('orders').select('*, order_lines(*)').eq('merchant_id', merchantId),
-        state.client.from('categories').select('*'),
-      ]);
-
-      if (pRes.data && pRes.data.length > 0) {
-        productsVal = pRes.data.map((p) => ({
-          id: p.id,
-          title: p.title,
-          status: p.status,
-          category: p.category_id,
-          variants: (p.product_variants || []).map((v) => ({
-            id: v.id,
-            sku: v.sku,
-            title: v.title,
-            priceMinor: v.price_minor,
-            availableQuantity: 25,
-            reservedQuantity: 0,
-          })),
-          media: (p.product_media || []).map((m) => ({
-            id: m.id,
-            mediaUrl: m.media_url,
-          })),
-          createdAt: p.created_at,
-          updatedAt: p.updated_at,
-        }));
-      }
-
-      if (oRes.data) {
-        ordersVal = oRes.data.map((o) => ({
-          id: o.id,
-          orderNumber: o.order_number,
-          status: o.status,
-          totalAmountMinor: o.total_amount_minor,
-          deliveryFeeMinor: o.delivery_fee_minor,
-          createdAt: o.created_at,
-          lines: o.order_lines || [],
-        }));
-      }
-
-      if (cRes.data && cRes.data.length > 0) {
-        categoriesVal = cRes.data.map((c) => ({
-          id: c.id,
-          name: c.name,
-          slug: c.slug,
-        }));
-      }
-
-      overviewVal = {
-        merchant: state.merchant || { status: 'active', businessName: 'SellFast Store' },
-        viewer: {
-          memberRole: state.merchant?.memberRole || 'owner',
-          isOwner: true,
-        },
-        catalogue: {
-          total: productsVal.length,
-          draft: productsVal.filter((p) => p.status === 'draft').length,
-          pendingApproval: productsVal.filter((p) => p.status === 'pending_approval').length,
-          published: productsVal.filter((p) => p.status === 'published').length,
-          archived: productsVal.filter((p) => p.status === 'archived').length,
-        },
-        fulfilment: {
-          awaitingAcceptance: ordersVal.filter((o) => o.status === 'payment_confirmed').length,
-          awaitingPacking: ordersVal.filter((o) => o.status === 'processing').length,
-          inTransit: ordersVal.filter((o) => o.status === 'in_transit').length,
-        },
-        returnRequests: {
-          open: returnsVal.filter((r) => ['requested', 'approved', 'received'].includes(r.status)).length,
-          requested: returnsVal.filter((r) => r.status === 'requested').length,
-        },
-        verification: {
-          status: 'approved',
-          rejectionReason: null,
-          updatedAt: new Date().toISOString(),
-        },
-        paymentModule: {
-          status: 'deferred',
-          message: 'Payouts, settlement balances, and bank-recipient setup are unavailable until the dedicated payment module is released.',
-        },
-      };
-
-      teamVal = [{
-        id: state.session?.user?.id || 'owner',
-        email: state.session?.user?.email || 'owner@sellfastbuyfast.com',
-        fullName: state.session?.user?.user_metadata?.full_name || 'Merchant Owner',
-        role: 'owner',
-      }];
+    const [overview, products, orders, returns, team, categories] = results;
+    if (overview.status !== 'fulfilled') throw overview.reason;
+    overviewVal = overview.value;
+    if (products.status === 'fulfilled') productsVal = products.value;
+    if (orders.status === 'fulfilled') ordersVal = orders.value;
+    if (returns.status === 'fulfilled') returnsVal = returns.value;
+    if (team.status === 'fulfilled') teamVal = team.value;
+    if (categories.status === 'fulfilled') categoriesVal = categories.value;
+    if (results.some((result) => result.status === 'rejected')) {
+      state.partialDataError = 'Some workspace data could not be loaded. Refresh to try again.';
     }
 
     if (requestVersion !== state.dataRequestVersion) return;
@@ -2029,61 +2150,8 @@ async function loadWorkspace() {
   state.workspaceError = '';
   render();
   try {
-    try {
-      const data = await api('/v1/vendor/me');
-      state.merchants = data.merchants || [];
-    } catch (apiError) {
-      console.warn('Core API unreachable, falling back to direct Supabase data:', apiError);
-      if (state.client && state.session?.user) {
-        // Query merchant memberships from Supabase
-        const { data: memberRows, error: memberErr } = await state.client
-          .from('merchant_members')
-          .select('merchant_id, role, merchants(*)')
-          .eq('user_id', state.session.user.id);
-
-        if (!memberErr && memberRows && memberRows.length > 0) {
-          state.merchants = memberRows
-            .filter((row) => row.merchants)
-            .map((row) => ({
-              id: row.merchants.id,
-              slug: row.merchants.slug,
-              businessName: row.merchants.business_name,
-              description: row.merchants.description,
-              logoUrl: row.merchants.logo_url,
-              contactEmail: row.merchants.contact_email,
-              contactPhone: row.merchants.contact_phone,
-              state: row.merchants.state,
-              lga: row.merchants.lga,
-              address: row.merchants.address,
-              status: row.merchants.status,
-              memberRole: row.role,
-            }));
-        }
-
-        // If no explicit membership found, fetch active merchants from Supabase
-        if (state.merchants.length === 0) {
-          const { data: allMerchants } = await state.client.from('merchants').select('*');
-          if (allMerchants && allMerchants.length > 0) {
-            state.merchants = allMerchants.map((m) => ({
-              id: m.id,
-              slug: m.slug,
-              businessName: m.business_name,
-              description: m.description,
-              logoUrl: m.logo_url,
-              contactEmail: m.contact_email,
-              contactPhone: m.contact_phone,
-              state: m.state,
-              lga: m.lga,
-              address: m.address,
-              status: m.status,
-              memberRole: 'owner',
-            }));
-          }
-        }
-      } else {
-        throw apiError;
-      }
-    }
+    const data = await api('/v1/vendor/me');
+    state.merchants = data.merchants || [];
 
     const savedId = window.localStorage.getItem('sfbf-vendor-merchant-id');
     state.merchant = state.merchants.find((merchant) => merchant.id === savedId) || state.merchants[0] || null;
@@ -2264,9 +2332,80 @@ document.addEventListener('click', async (event) => {
     state.modal = {
       type: 'stock',
       variantId: button.dataset.variantId,
+      productTitle: button.dataset.productTitle || 'Product Variant',
+      sku: button.dataset.sku || '',
       quantity: button.dataset.quantity || '0',
     };
     render();
+    return;
+  }
+
+  if (action === 'edit-product') {
+    const prodId = button.dataset.productId;
+    const prod = state.products.find((p) => p.id === prodId);
+    if (prod) {
+      const variant = prod.variants?.[0];
+      const media = prod.media?.find((m) => m.mediaType === 'image');
+      state.editingProductId = prod.id;
+      state.productDraft = {
+        title: prod.title || '',
+        categoryId: prod.categoryId || '',
+        sku: variant?.sku || '',
+        priceNaira: variant ? String(Math.round(variant.priceMinor / 100)) : '',
+        comparePriceNaira: prod.comparePriceMinor ? String(Math.round(prod.comparePriceMinor / 100)) : '',
+        availableQuantity: variant ? String(variant.availableQuantity) : '10',
+        description: prod.description || '',
+        imageUrl: media?.mediaUrl || '',
+        submitForReview: prod.status === 'published' || prod.status === 'pending_approval',
+      };
+      state.activeView = 'add-product';
+      render();
+    }
+    return;
+  }
+
+  if (action === 'new-product') {
+    state.editingProductId = null;
+    state.productDraft = {
+      title: '',
+      categoryId: '',
+      sku: '',
+      priceNaira: '',
+      comparePriceNaira: '',
+      availableQuantity: '10',
+      description: '',
+      imageUrl: '',
+      submitForReview: true,
+    };
+    state.activeView = 'add-product';
+    render();
+    return;
+  }
+
+  if (action === 'use-sample-image') {
+    const titleInput = document.getElementById('prod-title');
+    const imgInput = document.getElementById('prod-image');
+    if (button.dataset.url && imgInput) {
+      imgInput.value = button.dataset.url;
+      if (titleInput && (!titleInput.value.trim() || titleInput.value.includes("Oxford Shoes"))) {
+        titleInput.value = button.dataset.title || '';
+      }
+      imgInput.dispatchEvent(new Event('input', { bubbles: true }));
+      if (titleInput) titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    return;
+  }
+
+  if (action === 'adjust-stock-step') {
+    const input = document.getElementById('modal-stock-qty');
+    if (!input) return;
+    if (button.dataset.set !== undefined) {
+      input.value = button.dataset.set;
+    } else if (button.dataset.delta) {
+      const current = Number(input.value) || 0;
+      const delta = Number(button.dataset.delta) || 0;
+      input.value = Math.max(0, current + delta);
+    }
     return;
   }
 
@@ -2317,12 +2456,12 @@ document.addEventListener('click', async (event) => {
   }
 });
 
-// Search input handler
+// Search & Live Studio Input Handler
 document.addEventListener('input', (event) => {
   if (event.target.id === 'catalogue-search') {
-    const term = event.target.value.trim().toLowerCase();
+    state.catalogueSearch = event.target.value.trim().toLowerCase();
     document.querySelectorAll('[data-product-row]').forEach((row) => {
-      row.hidden = !row.dataset.productRow.includes(term);
+      row.hidden = !row.dataset.productRow.includes(state.catalogueSearch);
     });
   }
   if (event.target.id === 'fulfilment-search') {
@@ -2336,6 +2475,68 @@ document.addEventListener('input', (event) => {
     document.querySelectorAll('[data-return-card]').forEach((card) => {
       card.hidden = !card.dataset.returnCard.includes(state.returnsSearch);
     });
+  }
+
+  // Live sync of Product Studio Shopper Preview
+  if (['prod-title', 'prod-price', 'prod-compare-price', 'prod-stock', 'prod-image'].includes(event.target.id)) {
+    const titleVal = document.getElementById('prod-title')?.value || 'Product Title';
+    const priceVal = Number(document.getElementById('prod-price')?.value) || 0;
+    const compareVal = Number(document.getElementById('prod-compare-price')?.value) || 0;
+    const stockVal = Number(document.getElementById('prod-stock')?.value) || 0;
+    const imgVal = document.getElementById('prod-image')?.value?.trim();
+
+    const titleEl = document.getElementById('preview-title-text');
+    if (titleEl) titleEl.textContent = titleVal;
+
+    const charCount = document.getElementById('title-char-count');
+    if (charCount) charCount.textContent = titleVal.length;
+
+    const priceEl = document.getElementById('preview-price-text');
+    if (priceEl) priceEl.textContent = priceVal ? formatNaira(priceVal * 100) : '₦0';
+
+    const compareEl = document.getElementById('preview-compare-text');
+    if (compareEl) {
+      if (compareVal > priceVal) {
+        compareEl.style.display = 'inline';
+        compareEl.textContent = formatNaira(compareVal * 100);
+      } else {
+        compareEl.style.display = 'none';
+      }
+    }
+
+    const discountBadge = document.getElementById('preview-discount-badge');
+    const discountVal = document.getElementById('preview-discount-val');
+    if (discountBadge && discountVal) {
+      if (compareVal > priceVal && priceVal > 0) {
+        const pct = Math.round(((compareVal - priceVal) / compareVal) * 100);
+        discountVal.textContent = pct;
+        discountBadge.style.display = 'inline-block';
+      } else {
+        discountBadge.style.display = 'none';
+      }
+    }
+
+    const stockDot = document.getElementById('preview-stock-dot');
+    const stockText = document.getElementById('preview-stock-text');
+    if (stockDot && stockText) {
+      stockDot.className = `shopper-stock-dot ${stockVal === 0 ? 'danger' : (stockVal <= 3 ? 'warn' : '')}`;
+      stockText.style.color = stockVal === 0 ? 'var(--rose-600)' : (stockVal <= 3 ? 'var(--gold-600)' : 'var(--ink-secondary)');
+      stockText.textContent = stockVal === 0 ? 'Out of Stock' : (stockVal <= 3 ? `Only ${stockVal} left` : 'In Stock');
+    }
+
+    const previewImgEl = document.getElementById('preview-card-img');
+    if (previewImgEl && safeUrl(imgVal)) {
+      previewImgEl.src = imgVal;
+    }
+  }
+});
+
+document.addEventListener('change', (event) => {
+  if (event.target.id === 'prod-category') {
+    const catSelect = event.target;
+    const catText = catSelect.options[catSelect.selectedIndex]?.text;
+    const catEl = document.getElementById('preview-cat-text');
+    if (catEl && catText && catText !== 'Select Category') catEl.textContent = catText;
   }
 });
 
@@ -2588,21 +2789,60 @@ document.addEventListener('submit', async (event) => {
     return;
   }
 
-  // Product Studio Form
+  // Product Studio Form (Create or Edit)
   if (form.id === 'product-form') {
     const title = form.elements.title.value.trim();
     const categoryId = form.elements.categoryId.value;
     const sku = form.elements.sku.value.trim();
     const priceNaira = Number(form.elements.priceNaira.value);
+    const comparePriceNaira = Number(form.elements.comparePriceNaira?.value) || 0;
     const availableQuantity = Number(form.elements.availableQuantity.value);
     const description = form.elements.description.value.trim();
     const imageUrl = form.elements.imageUrl.value.trim();
     const submitForReview = form.elements.submitForReview.checked;
 
     const priceMinor = Math.round(priceNaira * 100);
+    const comparePriceMinor = comparePriceNaira > 0 ? Math.round(comparePriceNaira * 100) : undefined;
+
     if (!title || !categoryId || !sku || !Number.isFinite(priceNaira) || !Number.isSafeInteger(priceMinor) || priceNaira <= 0 || !Number.isSafeInteger(availableQuantity) || availableQuantity < 0 || !description || !safeUrl(imageUrl)) {
-      state.formError = 'Please fill in all product specification fields.';
+      state.formError = 'Please fill in all required product specification fields.';
       render();
+      return;
+    }
+
+    if (state.editingProductId) {
+      const prodId = state.editingProductId;
+      const existingProduct = state.products.find((p) => p.id === prodId);
+      const variantId = existingProduct?.variants?.[0]?.id;
+
+      await performServerAction('update-product', async () => {
+        await api(`/v1/catalog-management/products/${prodId}`, {
+          method: 'PATCH',
+          idempotencyScope: 'catalog-update',
+          body: {
+            title,
+            description,
+            categoryId,
+            comparePriceMinor: comparePriceMinor || null,
+          },
+        });
+        if (variantId) {
+          await api(`/v1/catalog-management/variants/${variantId}/inventory`, {
+            method: 'PATCH',
+            idempotencyScope: 'catalog-inventory',
+            body: { availableQuantity },
+          });
+        }
+        if (submitForReview && existingProduct?.status === 'draft') {
+          await api(`/v1/catalog-management/products/${prodId}/submit`, {
+            method: 'POST',
+            idempotencyScope: 'catalog-submit',
+          });
+        }
+        state.editingProductId = null;
+        state.productDraft = null;
+        state.activeView = 'catalogue';
+      }, 'Product specifications updated successfully.');
       return;
     }
 
@@ -2614,6 +2854,7 @@ document.addEventListener('submit', async (event) => {
           categoryId,
           title,
           description,
+          comparePriceMinor,
           variants: [{ sku, title: 'Default', priceMinor, availableQuantity }],
           media: [{ mediaUrl: imageUrl, mediaType: 'image', altText: title, sortOrder: 0 }],
         },
@@ -2624,6 +2865,8 @@ document.addEventListener('submit', async (event) => {
           idempotencyScope: 'catalog-submit',
         });
       }
+      state.editingProductId = null;
+      state.productDraft = null;
       state.activeView = 'catalogue';
     }, submitForReview ? 'Product created and submitted for Operations review.' : 'Product saved as a draft.');
     return;

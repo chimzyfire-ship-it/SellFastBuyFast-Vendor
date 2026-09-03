@@ -2191,3 +2191,306 @@ svg.lucide {
   background: rgba(255, 255, 255, 0.35);
 }
 
+/* ==========================================================================
+   CATALOGUE & PRODUCT STUDIO ENHANCEMENTS
+   ========================================================================== */
+
+/* Catalogue Summary KPI Bar */
+.catalogue-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+@media (min-width: 768px) {
+  .catalogue-kpis {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+}
+
+.catalogue-kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.catalogue-kpi-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+  border-color: var(--border-medium);
+}
+
+.catalogue-kpi-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  background: var(--page-subtle);
+  color: var(--forest-800);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.catalogue-kpi-icon.warn {
+  background: var(--gold-50);
+  color: var(--gold-600);
+}
+
+.catalogue-kpi-icon.danger {
+  background: var(--rose-50);
+  color: var(--rose-600);
+}
+
+.catalogue-kpi-content {
+  min-width: 0;
+}
+
+.catalogue-kpi-val {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ink-primary);
+  line-height: 1.2;
+}
+
+.catalogue-kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+/* Product Studio 2-Column Grid */
+.studio-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+
+@media (min-width: 1024px) {
+  .studio-grid {
+    grid-template-columns: 1.35fr 0.85fr;
+    align-items: flex-start;
+  }
+}
+
+.shopper-preview-sticky {
+  position: sticky;
+  top: 20px;
+}
+
+/* Simulated Mobile Shopper Card */
+.shopper-card-mock {
+  background: #ffffff;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-medium);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+.shopper-card-img-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: var(--page-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.shopper-card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s ease;
+}
+
+.shopper-badge-discount {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: var(--rose-600);
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  letter-spacing: 0.02em;
+}
+
+.shopper-badge-verified {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(3, 28, 22, 0.78);
+  backdrop-filter: blur(4px);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.shopper-card-body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shopper-card-category {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--forest-700);
+  letter-spacing: 0.04em;
+}
+
+.shopper-card-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--ink-primary);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 38px;
+}
+
+.shopper-card-pricing {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.shopper-card-price {
+  font-family: var(--font-numbers);
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--forest-900);
+}
+
+.shopper-card-compare {
+  font-family: var(--font-numbers);
+  font-size: 13px;
+  color: var(--ink-faint);
+  text-decoration: line-through;
+}
+
+.shopper-card-stock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.shopper-stock-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--forest-600);
+}
+
+.shopper-stock-dot.warn {
+  background: var(--gold-500);
+}
+
+.shopper-stock-dot.danger {
+  background: var(--rose-500);
+}
+
+.shopper-card-btn {
+  margin-top: 6px;
+  width: 100%;
+  height: 38px;
+  background: var(--forest-900);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+/* Quick image sample presets */
+.image-preset-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.image-preset-pill {
+  padding: 4px 10px;
+  background: var(--page-subtle);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-full);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.image-preset-pill:hover {
+  background: var(--forest-800);
+  border-color: var(--forest-800);
+  color: #ffffff;
+}
+
+/* Stock Stepper Buttons in Stock Modal */
+.stock-stepper-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.stock-step-btn {
+  padding: 6px 12px;
+  border-radius: var(--radius-xs);
+  background: var(--page-subtle);
+  border: 1px solid var(--border-medium);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.stock-step-btn:hover {
+  background: var(--forest-800);
+  border-color: var(--forest-800);
+  color: #ffffff;
+}
+
+.stock-step-btn.danger:hover {
+  background: var(--rose-600);
+  border-color: var(--rose-600);
+  color: #ffffff;
+}
+
