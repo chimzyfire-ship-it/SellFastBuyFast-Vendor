@@ -778,7 +778,7 @@ function renderShellHtml() {
             </button>
             <div class="topbar-divider"></div>
             ${statusBadge(verification)}
-            <button class="btn btn-primary btn-sm" type="button" data-action="navigate" data-view="add-product" ${catalogueEnabled ? '' : 'disabled'}>
+            <button class="btn btn-primary btn-sm" type="button" data-action="new-product" ${catalogueEnabled ? '' : 'disabled'}>
               ${icon('plus')} <span class="hide-mobile">New Product</span>
             </button>
           </div>
@@ -824,12 +824,19 @@ function renderDashboardView() {
   const overview = state.overview;
   if (!overview) return renderSkeletonWorkspace();
 
-  const pendingCount = (overview?.fulfilment?.awaitingAcceptance ?? 0) + (overview?.fulfilment?.awaitingPacking ?? 0);
-  const inTransitCount = overview?.fulfilment?.inTransit ?? 0;
-  const catalogueCount = overview?.catalogue?.published ?? state.products.length;
-  const returnsCount = overview?.returnRequests?.requested ?? 0;
+  const awaitingAcceptance = state.orders.filter((o) => o.status === 'payment_confirmed').length;
+  const awaitingPacking = state.orders.filter((o) => o.status === 'processing' && o.shipment?.status !== 'packed').length;
+  const packedCount = state.orders.filter((o) => o.status === 'processing' && o.shipment?.status === 'packed').length;
+  const inTransitCount = state.orders.filter((o) => o.status === 'in_transit').length;
+  const pendingCount = awaitingAcceptance + awaitingPacking + packedCount;
+
+  const publishedCount = state.products.filter((p) => p.status === 'published').length;
+  const draftCount = state.products.filter((p) => p.status === 'draft').length;
+  const inReviewCount = state.products.filter((p) => p.status === 'pending_approval').length;
+
+  const returnsCount = state.returns.filter((r) => r.status === 'requested').length;
+  const openReturnsCount = state.returns.filter((r) => ['requested', 'approved', 'received'].includes(r.status)).length;
   const urgentOrders = state.orders.filter((o) => ['payment_confirmed', 'processing'].includes(o.status)).slice(0, 8);
-  const verStatus = overview?.verification?.status || state.merchant?.status || 'approved';
 
   return `
     <!-- Top Ambient Banner -->
@@ -850,7 +857,7 @@ function renderDashboardView() {
           <button class="btn btn-secondary btn-sm" type="button" data-action="navigate" data-view="fulfilment" style="color:var(--forest-950);font-weight:700;">
             ${icon('truck')} Fulfilment Queue (${pendingCount})
           </button>
-          <button class="btn btn-quiet btn-sm" type="button" data-action="navigate" data-view="add-product" style="color:#ffffff;background:rgba(255,255,255,0.15);font-weight:600;">
+          <button class="btn btn-quiet btn-sm" type="button" data-action="new-product" style="color:#ffffff;background:rgba(255,255,255,0.15);font-weight:600;">
             ${icon('plus')} Add Product
           </button>
         </div>
@@ -866,7 +873,7 @@ function renderDashboardView() {
         </div>
         <div class="metric-value">${pendingCount}</div>
         <div class="metric-footer">
-          <span>${overview?.fulfilment?.awaitingAcceptance ?? 0} to accept · ${overview?.fulfilment?.awaitingPacking ?? 0} to pack</span>
+          <span>${awaitingAcceptance} to accept · ${awaitingPacking + packedCount} to pack</span>
         </div>
       </div>
 
@@ -886,9 +893,9 @@ function renderDashboardView() {
           <span class="metric-title">Active Catalogue</span>
           <div class="metric-icon-box">${icon('layers')}</div>
         </div>
-        <div class="metric-value">${catalogueCount}</div>
+        <div class="metric-value">${publishedCount}</div>
         <div class="metric-footer">
-          <span>${overview?.catalogue?.draft ?? 0} drafts · ${overview?.catalogue?.pendingApproval ?? 0} in review</span>
+          <span>${draftCount} drafts · ${inReviewCount} in review</span>
         </div>
       </div>
 
@@ -899,7 +906,7 @@ function renderDashboardView() {
         </div>
         <div class="metric-value">${returnsCount}</div>
         <div class="metric-footer">
-          <span>${overview?.returnRequests?.open ?? 0} open return cases</span>
+          <span>${openReturnsCount} open return cases</span>
         </div>
       </div>
     </div>
@@ -916,7 +923,21 @@ function renderDashboardView() {
         </button>
       </div>
       <div class="table-container">
-        ${renderOrdersTable(urgentOrders, true)}
+        ${urgentOrders.length > 0 ? renderOrdersTable(urgentOrders, true) : `
+          <div class="empty-state" style="padding:36px 20px;">
+            <div class="empty-icon-wrap" style="background:rgba(10,82,67,0.08);color:var(--forest-800);">${icon('check-circle-2')}</div>
+            <h3 class="empty-title">All dispatch queues are clear</h3>
+            <p class="empty-text">No active customer orders require immediate merchant packing or dispatch right now.</p>
+            <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-sm" type="button" data-action="simulate-customer-order">
+                ${icon('plus-circle')} Simulate Test Customer Order
+              </button>
+              <button class="btn btn-quiet btn-sm" type="button" data-action="navigate" data-view="catalogue">
+                ${icon('package')} View Product Catalogue
+              </button>
+            </div>
+          </div>
+        `}
       </div>
     </div>`;
 }
@@ -2875,6 +2896,47 @@ document.addEventListener('click', async (event) => {
     } catch (error) {
       showNotice(requestErrorMessage(error, 'The workspace could not be refreshed.'), 'error');
     }
+    return;
+  }
+
+  if (action === 'simulate-customer-order') {
+    const randomId = crypto.randomUUID();
+    const orderNum = 'SF-' + Math.floor(100000 + Math.random() * 900000);
+    const prod = state.products[0] || {
+      title: 'Smart Watch Series 9',
+      variants: [{ id: 'var-1', priceMinor: 15000000 }],
+    };
+    const varItem = prod.variants?.[0] || { id: 'var-1', priceMinor: 15000000 };
+
+    const simulatedOrder = {
+      id: randomId,
+      orderNumber: orderNum,
+      status: 'payment_confirmed',
+      buyerName: 'Adaeze Okafor',
+      totalAmountMinor: varItem.priceMinor + 250000,
+      deliveryFeeMinor: 250000,
+      deliveryAddress: {
+        contactName: 'Adaeze Okafor',
+        lga: 'Lekki Phase 1',
+        state: 'Lagos',
+      },
+      createdAt: new Date().toISOString(),
+      lines: [
+        {
+          id: crypto.randomUUID(),
+          productTitle: prod.title,
+          quantity: 1,
+          unitPriceMinor: varItem.priceMinor,
+        },
+      ],
+      shipment: {
+        status: 'pending',
+      },
+    };
+
+    state.orders.unshift(simulatedOrder);
+    render();
+    showNotice(`Simulated customer order ${orderNum} received with Escrow payment confirmed!`);
     return;
   }
 
