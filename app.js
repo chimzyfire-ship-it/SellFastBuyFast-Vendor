@@ -54,6 +54,10 @@ const state = {
   configurationError: '',
   dataRequestVersion: 0,
   dataAbortController: null,
+  profileDraft: null,
+  verificationData: null,
+  selectedIdDocFile: null,
+  selectedUtilityBillFile: null,
 };
 
 const VIEW_TITLES = {
@@ -78,20 +82,6 @@ function getInventoryCache() {
 function saveInventoryCache(cache) {
   try {
     window.localStorage?.setItem('sfbf_inventory_cache', JSON.stringify(cache));
-  } catch (e) {}
-}
-
-function getProfileCache() {
-  try {
-    return JSON.parse(window.localStorage?.getItem('sfbf_profile_cache') || '{}');
-  } catch (e) {
-    return {};
-  }
-}
-
-function saveProfileCache(cache) {
-  try {
-    window.localStorage?.setItem('sfbf_profile_cache', JSON.stringify(cache));
   } catch (e) {}
 }
 
@@ -1757,6 +1747,11 @@ function renderAddProductView() {
 
         <!-- MOCKUP A: Feed Card View -->
         <div id="mockup-card-view" style="display:${previewMode === 'card' ? 'block' : 'none'};">
+          ${state.merchant?.vacationMode ? `
+            <div class="sim-store-away-banner">
+              ${icon('power')} <span>Store temporarily away · Purchasing paused</span>
+            </div>
+          ` : ''}
           <div class="shopper-card-mock">
             <div class="shopper-card-img-wrap">
               <img src="${escapeAttribute(previewImg)}" alt="${escapeAttribute(previewTitle)}" class="shopper-card-img" id="preview-card-img" onerror="this.src='assets/product-sneakers-arch.jpg'" />
@@ -1784,8 +1779,8 @@ function renderAddProductView() {
               <div style="font-size:11px;color:var(--ink-muted);display:flex;align-items:center;gap:4px;">
                 ${icon('store')} ${escapeHtml(storeName)} · ${escapeHtml(storeLga)}
               </div>
-              <button type="button" class="shopper-card-btn sim-interactive-btn" id="feed-add-bag-btn" data-action="sim-add-to-bag">
-                ${icon('shopping-bag')} Add to Bag
+              <button type="button" class="shopper-card-btn sim-interactive-btn" id="feed-add-bag-btn" data-action="sim-add-to-bag" ${state.merchant?.vacationMode ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                ${icon('shopping-bag')} ${state.merchant?.vacationMode ? 'Store Away' : 'Add to Bag'}
               </button>
             </div>
           </div>
@@ -1793,6 +1788,11 @@ function renderAddProductView() {
 
         <!-- MOCKUP B: Product Detail View -->
         <div id="mockup-detail-view" style="display:${previewMode === 'detail' ? 'block' : 'none'};position:relative;">
+          ${state.merchant?.vacationMode ? `
+            <div class="sim-store-away-banner">
+              ${icon('power')} <span>Store temporarily away · Purchasing paused</span>
+            </div>
+          ` : ''}
           <div class="shopper-detail-mock" id="shopper-detail-frame" style="position:relative;">
             <!-- App Bar -->
             <div class="shopper-detail-header">
@@ -1869,11 +1869,11 @@ function renderAddProductView() {
 
               <!-- Mobile Bottom Action Buttons -->
               <div style="display:flex;gap:8px;margin-top:6px;">
-                <button type="button" class="sim-interactive-btn" id="detail-add-bag-btn" data-action="sim-add-to-bag" style="flex:1;padding:9px 0;background:var(--page-subtle);border:1px solid var(--border-medium);border-radius:var(--radius-xs);font-size:11.5px;font-weight:700;text-align:center;color:var(--ink-primary);display:flex;align-items:center;justify-content:center;gap:6px;">
-                  ${icon('shopping-bag')} Add to Bag
+                <button type="button" class="sim-interactive-btn" id="detail-add-bag-btn" data-action="sim-add-to-bag" ${state.merchant?.vacationMode ? 'disabled' : ''} style="flex:1;padding:9px 0;background:var(--page-subtle);border:1px solid var(--border-medium);border-radius:var(--radius-xs);font-size:11.5px;font-weight:700;text-align:center;color:var(--ink-primary);display:flex;align-items:center;justify-content:center;gap:6px;${state.merchant?.vacationMode ? 'opacity:0.5;cursor:not-allowed;' : ''}">
+                  ${icon('shopping-bag')} ${state.merchant?.vacationMode ? 'Store Away' : 'Add to Bag'}
                 </button>
-                <button type="button" class="sim-interactive-btn" id="detail-buy-escrow-btn" data-action="sim-buy-escrow" style="flex:1.5;padding:9px 0;background:var(--forest-900);border-radius:var(--radius-xs);font-size:11.5px;font-weight:700;text-align:center;color:#ffffff;display:flex;align-items:center;justify-content:center;gap:6px;">
-                  ${icon('shield-check')} Buy with Escrow
+                <button type="button" class="sim-interactive-btn" id="detail-buy-escrow-btn" data-action="sim-buy-escrow" ${state.merchant?.vacationMode ? 'disabled' : ''} style="flex:1.5;padding:9px 0;background:${state.merchant?.vacationMode ? 'var(--ink-muted)' : 'var(--forest-900)'};border-radius:var(--radius-xs);font-size:11.5px;font-weight:700;text-align:center;color:#ffffff;display:flex;align-items:center;justify-content:center;gap:6px;${state.merchant?.vacationMode ? 'opacity:0.5;cursor:not-allowed;' : ''}">
+                  ${icon('shield-check')} ${state.merchant?.vacationMode ? 'Orders Paused' : 'Buy with Escrow'}
                 </button>
               </div>
             </div>
@@ -2277,26 +2277,49 @@ const NIGERIAN_STATES = [
 ];
 
 function renderProfileView() {
-  const pCache = getProfileCache();
-  const rawM = state.overview?.merchant || state.merchant || {};
-  const m = { ...rawM, ...pCache };
-  const ver = state.overview?.verification || {};
-  const isOwner = state.overview?.viewer?.isOwner ?? true;
-
-  // Determine merchant registration lifecycle state: 'registered' vs 'not_registered'
-  const defaultState = (m.status === 'active' || ver.status === 'approved' || m.kycStatus === 'verified') ? 'registered' : 'not_registered';
-  const regState = state.profileRegistrationState || m.registrationState || defaultState;
+  const m = state.overview?.merchant || state.merchant || {};
+  const viewer = state.overview?.viewer || {
+    memberRole: 'owner',
+    isOwner: true,
+    canEditProfile: true,
+    canSubmitRegistration: true,
+  };
+  const regState = m.registrationState || 'not_registered';
   const isRegistered = regState === 'registered';
+  const isInReview = regState === 'in_review';
+  const isNotRegistered = regState === 'not_registered';
+  const isVacation = Boolean(m.vacationMode);
+  const canEdit = Boolean(viewer.canEditProfile);
+  const canSubmit = Boolean(viewer.canSubmitRegistration);
 
-  const isVacation = Boolean(m.vacationMode || m.status === 'vacation' || m.status === 'suspended');
-  const storeSlug = m.slug || 'chimzy-stores';
+  // Fallback to server profile draft if unregistered
+  const draft = (isNotRegistered && state.profileDraft) ? state.profileDraft : {};
+  const val = (key, fallback = '') => {
+    if (m[key] !== undefined && m[key] !== null && m[key] !== '') return m[key];
+    if (draft[key] !== undefined && draft[key] !== null && draft[key] !== '') return draft[key];
+    return fallback;
+  };
+
+  const businessName = val('businessName');
+  const storeSlug = val('slug') || (businessName ? businessName.toLowerCase().replace(/[^a-z0-9-]/g, '-') : 'store');
+  const description = val('description');
+  const logoUrl = val('logoUrl');
+  const bannerUrl = val('bannerUrl');
+  const contactEmail = val('contactEmail');
+  const contactPhone = val('contactPhone');
+  const whatsappPhone = val('whatsappPhone');
+  const address = val('address');
+  const lga = val('lga');
+  const currentState = val('state', 'Lagos State');
+  const dispatchContactName = val('dispatchContactName');
+  const dispatchContactPhone = val('dispatchContactPhone');
+  const fulfillmentSla = val('fulfillmentSla', 'same_day');
   const publicStoreUrl = `https://sellfastbuyfast.com/store/${storeSlug}`;
-  const currentState = m.state || 'Lagos State';
 
   // Stepper calculations for onboarding/unregistered view
-  const hasIdentity = Boolean(m.businessName && storeSlug);
-  const hasWarehouse = Boolean(m.address && m.lga);
-  const hasCompliance = Boolean(m.cacNumber && m.directorNin);
+  const hasIdentity = Boolean(businessName && storeSlug);
+  const hasWarehouse = Boolean(address && lga && currentState && dispatchContactName && dispatchContactPhone);
+  const hasCompliance = Boolean(state.selectedIdDocFile && state.selectedUtilityBillFile);
 
   return `
     <div class="page-header">
@@ -2306,33 +2329,43 @@ function renderProfileView() {
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
         <span class="compliance-badge ${isRegistered ? 'verified' : 'pending'}">
-          ${icon(isRegistered ? 'shield-check' : 'clock')} ${isRegistered ? 'Verified Enterprise' : 'Verification In-Progress'}
+          ${icon(isRegistered ? 'shield-check' : (isInReview ? 'clock' : 'alert-circle'))} 
+          ${isRegistered ? 'Verified Enterprise' : (isInReview ? 'Registration Under Review' : 'Registration In-Progress')}
         </span>
-        <span class="status-pill ${isVacation ? 'status-pill-neutral' : 'status-pill-success'}">
-          ${isVacation ? 'Vacation Mode' : 'Store Active'}
+        <span class="status-pill ${isVacation ? 'status-pill-neutral' : (isRegistered ? 'status-pill-success' : 'status-pill-warning')}">
+          ${isVacation ? 'Vacation Mode' : (isRegistered ? 'Store Active' : (isInReview ? 'Pending Operations' : 'Onboarding'))}
         </span>
       </div>
     </div>
 
-    <!-- Registration State Simulator & View Control -->
-    <div class="profile-mode-switcher">
-      <span style="font-size:12px;font-weight:700;color:var(--ink-secondary);display:flex;align-items:center;gap:6px;">
-        ${icon('shield')} Registration State Mode:
-      </span>
-      <div class="profile-segment-control">
-        <button type="button" class="profile-segment-btn ${isRegistered ? 'active' : ''}" data-action="set-profile-reg-state" data-state="registered" title="View profile as an already registered & verified enterprise merchant">
-          ${icon('shield-check')} Already Registered & Verified
-        </button>
-        <button type="button" class="profile-segment-btn ${!isRegistered ? 'active' : ''}" data-action="set-profile-reg-state" data-state="not_registered" title="View profile as a newly onboarded / in-progress merchant">
-          ${icon('alert-circle')} Not Yet Registered (In-Progress)
-        </button>
+    ${isNotRegistered && state.profileDraft ? `
+      <div class="draft-indicator-banner">
+        ${icon('file-text')}
+        <span>Loaded unsaved profile draft from server. You can edit, save progress, or submit registration.</span>
       </div>
-      <span style="font-size:11.5px;color:var(--ink-muted);margin-left:auto;">
-        ${isRegistered ? 'Enterprise Tier-2 Active: Courier pickup & live customer checkout enabled' : 'Onboarding Milestone: Complete CAC & warehouse pickup to activate store'}
-      </span>
-    </div>
+    ` : ''}
 
-    ${!isRegistered ? `
+    ${isInReview ? `
+      <!-- In-Review Operations State Card -->
+      <div class="registration-in-review-card">
+        <div class="in-review-header">
+          <div class="in-review-icon">${icon('clock')}</div>
+          <div>
+            <h3 class="in-review-title">Registration Under Operations Review</h3>
+            <p class="in-review-desc">
+              Your CAC filings, Director NIN, identity documents, and warehouse courier pickup address were submitted and are currently being reviewed by SellFast Risk & Operations. Verification is typically completed within 2–4 business hours. You will receive an automated notification once your store is activated.
+            </p>
+            ${state.overview?.verification?.rejectionReason ? `
+              <div style="margin-top:10px;padding:8px 12px;background:#fff1f2;border:1px solid #fecdd3;border-radius:var(--radius-sm);font-size:12px;color:#9f1239;">
+                <strong>Previous Feedback:</strong> ${escapeHtml(state.overview.verification.rejectionReason)}
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    ` : ''}
+
+    ${isNotRegistered ? `
       <!-- Onboarding Stepper for Unregistered / In-Progress Merchants -->
       <div class="registration-stepper-card">
         <div class="stepper-header">
@@ -2340,7 +2373,7 @@ function renderProfileView() {
             <div class="stepper-title">${icon('shield-alert')} Merchant Onboarding & Verification Progress</div>
             <p class="stepper-subtitle">Complete these 3 essential setup milestones to unlock automated 3PL courier pickup, online checkout, and seller escrow payouts.</p>
           </div>
-          <span class="stepper-progress-badge">${hasCompliance && hasWarehouse ? 'Step 3 of 3 (Ready for Review)' : (hasWarehouse ? 'Step 2 of 3 (Warehouse Complete)' : 'Step 1 of 3 (Identity Only)')}</span>
+          <span class="stepper-progress-badge">${hasCompliance && hasWarehouse ? 'Step 3 of 3 (Ready to Submit)' : (hasWarehouse ? 'Step 2 of 3 (Warehouse Complete)' : 'Step 1 of 3 (Identity Configured)')}</span>
         </div>
         <div class="stepper-steps-track">
           <div class="stepper-step completed">
@@ -2355,15 +2388,15 @@ function renderProfileView() {
             <div class="stepper-step-circle">${hasWarehouse ? icon('check') : '2'}</div>
             <div class="stepper-step-content">
               <span class="stepper-step-name">2. Warehouse Courier Pickup</span>
-              <span class="stepper-step-status">${hasWarehouse ? 'Recorded' : 'Action Required'}</span>
+              <span class="stepper-step-status">${hasWarehouse ? 'Address Complete' : 'Action Required'}</span>
             </div>
           </div>
           <div class="stepper-connector ${hasCompliance ? 'active' : ''}"></div>
           <div class="stepper-step ${hasCompliance ? 'completed' : (hasWarehouse ? 'current' : 'pending')}">
             <div class="stepper-step-circle">${hasCompliance ? icon('check') : '3'}</div>
             <div class="stepper-step-content">
-              <span class="stepper-step-name">3. CAC RC/BN & Director NIN</span>
-              <span class="stepper-step-status">${hasCompliance ? 'Ready for Audit' : 'Action Required'}</span>
+              <span class="stepper-step-name">3. CAC, NIN & Documents</span>
+              <span class="stepper-step-status">${hasCompliance ? 'Files Attached' : 'Action Required'}</span>
             </div>
           </div>
         </div>
@@ -2372,7 +2405,7 @@ function renderProfileView() {
       <div class="unregistered-callout-banner">
         <div class="unregistered-callout-icon">${icon('alert-triangle')}</div>
         <div class="unregistered-callout-text">
-          <strong>Store Verification Required Before First Sale:</strong> Under Nigerian CBN anti-fraud regulations and SellFast Escrow Terms, vendors must provide a physical pickup warehouse address and verified CAC business credentials. You may save your progress as a draft anytime, or submit when all 3 sections are filled.
+          <strong>Store Verification Required Before Live Sales:</strong> Under Nigerian CBN anti-fraud regulations and SellFast Escrow Terms, merchants must provide a physical pickup warehouse address and verified CAC business credentials. You may save your progress as a draft anytime, or submit when all sections are filled.
         </div>
       </div>
     ` : ''}
@@ -2380,25 +2413,26 @@ function renderProfileView() {
     <div class="store-profile-view">
       <!-- Storefront Hero Card -->
       <div class="store-hero-card">
-        <div class="store-hero-banner" ${m.bannerUrl ? `style="background-image:url('${escapeAttribute(m.bannerUrl)}');"` : ''}>
+        <div class="store-hero-banner" ${bannerUrl ? `style="background-image:url('${escapeAttribute(bannerUrl)}');"` : ''}>
           <div class="store-hero-overlay"></div>
         </div>
         <div class="store-hero-content">
           <div class="store-avatar-wrap">
-            ${m.logoUrl ? `
-              <img src="${escapeAttribute(m.logoUrl)}" alt="${escapeAttribute(m.businessName || 'Store')}" class="store-avatar-img" />
+            ${logoUrl ? `
+              <img src="${escapeAttribute(logoUrl)}" alt="${escapeAttribute(businessName || 'Store')}" class="store-avatar-img" />
             ` : `
-              <div class="store-avatar-fallback">${escapeHtml((m.businessName || 'S').charAt(0).toUpperCase())}</div>
+              <div class="store-avatar-fallback">${escapeHtml((businessName || 'S').charAt(0).toUpperCase())}</div>
             `}
           </div>
           <div class="store-hero-info">
             <div class="store-hero-title-row">
-              <h2 class="store-profile-title">${escapeHtml(m.businessName || 'SellFast Merchant Store')}</h2>
+              <h2 class="store-profile-title">${escapeHtml(businessName || 'SellFast Merchant Store')}</h2>
               <span class="compliance-badge ${isRegistered ? 'verified' : 'pending'}">
-                ${icon(isRegistered ? 'shield-check' : 'clock')} ${isRegistered ? 'CAC Audited & Verified' : 'Compliance In Review'}
+                ${icon(isRegistered ? 'shield-check' : (isInReview ? 'clock' : 'alert-circle'))} 
+                ${isRegistered ? 'CAC Audited & Verified' : (isInReview ? 'Registration In Review' : 'Compliance Incomplete')}
               </span>
             </div>
-            <p class="store-hero-tagline">${escapeHtml(m.description || 'Authorized vendor distributing authentic electronics, apparel, and lifestyle essentials with 7-day buyer protection.')}</p>
+            <p class="store-hero-tagline">${escapeHtml(description || 'Authorized vendor distributing authentic items with 7-day buyer escrow protection.')}</p>
             
             <div class="store-public-link-bar">
               <span class="store-link-label">${icon('globe')} Public Storefront:</span>
@@ -2435,7 +2469,7 @@ function renderProfileView() {
               <div class="card-body">
                 <div class="form-group">
                   <label class="form-label" for="prof-biz-name">Business / Store Name <span style="color:var(--rose-600);">*</span></label>
-                  <input class="input" id="prof-biz-name" name="businessName" value="${escapeAttribute(m.businessName || '')}" required />
+                  <input class="input" id="prof-biz-name" name="businessName" value="${escapeAttribute(businessName)}" ${!canEdit || isInReview ? 'readonly' : ''} required />
                   <span class="field-help">Your customer-facing trade or brand name.</span>
                 </div>
 
@@ -2443,24 +2477,24 @@ function renderProfileView() {
                   <label class="form-label" for="prof-slug">Storefront Handle / Custom Slug <span style="color:var(--rose-600);">*</span></label>
                   <div class="input-prefix-wrap">
                     <span class="input-prefix">sellfastbuyfast.com/store/</span>
-                    <input class="input input-with-prefix" id="prof-slug" name="slug" value="${escapeAttribute(storeSlug)}" required />
+                    <input class="input input-with-prefix" id="prof-slug" name="slug" value="${escapeAttribute(storeSlug)}" ${!canEdit || isInReview ? 'readonly' : ''} required />
                   </div>
-                  <span class="field-help">Unique handle for your public store URL.</span>
+                  <span class="field-help">Unique handle for your public store URL (3–80 characters).</span>
                 </div>
 
                 <div class="form-group">
                   <label class="form-label" for="prof-biz-desc">Store Bio / Tagline</label>
-                  <textarea class="textarea" id="prof-biz-desc" name="description" rows="3" placeholder="Tell buyers about your company, specialty goods, and warranty guarantee...">${escapeHtml(m.description || '')}</textarea>
+                  <textarea class="textarea" id="prof-biz-desc" name="description" rows="3" placeholder="Tell buyers about your company, specialty goods, and warranty guarantee..." ${!canEdit || isInReview ? 'readonly' : ''}>${escapeHtml(description)}</textarea>
                 </div>
 
                 <div class="grid-2col">
                   <div class="form-group">
                     <label class="form-label" for="prof-logo-url">Logo Image URL</label>
-                    <input class="input" id="prof-logo-url" name="logoUrl" type="url" placeholder="https://..." value="${escapeAttribute(m.logoUrl || '')}" />
+                    <input class="input" id="prof-logo-url" name="logoUrl" type="url" placeholder="https://..." value="${escapeAttribute(logoUrl)}" ${!canEdit || isInReview ? 'readonly' : ''} />
                   </div>
                   <div class="form-group">
                     <label class="form-label" for="prof-banner-url">Banner Image URL</label>
-                    <input class="input" id="prof-banner-url" name="bannerUrl" type="url" placeholder="https://..." value="${escapeAttribute(m.bannerUrl || '')}" />
+                    <input class="input" id="prof-banner-url" name="bannerUrl" type="url" placeholder="https://..." value="${escapeAttribute(bannerUrl)}" ${!canEdit || isInReview ? 'readonly' : ''} />
                   </div>
                 </div>
               </div>
@@ -2487,17 +2521,17 @@ function renderProfileView() {
 
                 <div class="form-group" style="margin-top:16px;">
                   <label class="form-label" for="prof-address">Street Address / Facility Unit <span style="color:var(--rose-600);">*</span></label>
-                  <input class="input" id="prof-address" name="address" value="${escapeAttribute(m.address || '')}" placeholder="e.g. Suite 4B, 14 Admiralty Way, Lekki Phase 1" required />
+                  <input class="input" id="prof-address" name="address" value="${escapeAttribute(address)}" placeholder="e.g. Suite 4B, 14 Admiralty Way, Lekki Phase 1" ${!canEdit || isInReview ? 'readonly' : ''} required />
                 </div>
 
                 <div class="grid-2col">
                   <div class="form-group">
                     <label class="form-label" for="prof-lga">Local Government Area (LGA) <span style="color:var(--rose-600);">*</span></label>
-                    <input class="input" id="prof-lga" name="lga" value="${escapeAttribute(m.lga || '')}" placeholder="e.g. Eti-Osa / Ikeja / Abuja Municipal" required />
+                    <input class="input" id="prof-lga" name="lga" value="${escapeAttribute(lga)}" placeholder="e.g. Eti-Osa / Ikeja / Abuja Municipal" ${!canEdit || isInReview ? 'readonly' : ''} required />
                   </div>
                   <div class="form-group">
                     <label class="form-label" for="prof-state">State <span style="color:var(--rose-600);">*</span></label>
-                    <select class="select" id="prof-state" name="state" required>
+                    <select class="select" id="prof-state" name="state" ${!canEdit || isInReview ? 'disabled' : ''} required>
                       ${NIGERIAN_STATES.map((st) => `<option value="${escapeAttribute(st)}" ${st === currentState ? 'selected' : ''}>${escapeHtml(st)}</option>`).join('')}
                     </select>
                   </div>
@@ -2505,12 +2539,12 @@ function renderProfileView() {
 
                 <div class="grid-2col">
                   <div class="form-group">
-                    <label class="form-label" for="prof-dispatch-name">Dispatch Officer / Contact Name</label>
-                    <input class="input" id="prof-dispatch-name" name="dispatchContactName" value="${escapeAttribute(m.dispatchContactName || '')}" placeholder="e.g. Tunde Bakare" />
+                    <label class="form-label" for="prof-dispatch-name">Dispatch Officer / Contact Name <span style="color:var(--rose-600);">*</span></label>
+                    <input class="input" id="prof-dispatch-name" name="dispatchContactName" value="${escapeAttribute(dispatchContactName)}" placeholder="e.g. Tunde Bakare" ${!canEdit || isInReview ? 'readonly' : ''} required />
                   </div>
                   <div class="form-group">
-                    <label class="form-label" for="prof-dispatch-phone">Dispatch Contact Phone</label>
-                    <input class="input" id="prof-dispatch-phone" name="dispatchContactPhone" type="tel" value="${escapeAttribute(m.dispatchContactPhone || '')}" placeholder="+234 803 000 0000" />
+                    <label class="form-label" for="prof-dispatch-phone">Dispatch Contact Phone <span style="color:var(--rose-600);">*</span></label>
+                    <input class="input" id="prof-dispatch-phone" name="dispatchContactPhone" type="tel" value="${escapeAttribute(dispatchContactPhone)}" placeholder="+234 803 000 0000" ${!canEdit || isInReview ? 'readonly' : ''} required />
                   </div>
                 </div>
               </div>
@@ -2530,10 +2564,10 @@ function renderProfileView() {
               <div class="card-body">
                 <div class="form-group">
                   <label class="form-label" for="prof-sla">Standard Order Dispatch Commitment</label>
-                  <select class="select" id="prof-sla" name="fulfillmentSla">
-                    <option value="same_day" ${(m.fulfillmentSla || 'same_day') === 'same_day' ? 'selected' : ''}>Same-Day Dispatch (under 12 hours) — Recommended for Top Merchant Rank</option>
-                    <option value="next_day" ${(m.fulfillmentSla) === 'next_day' ? 'selected' : ''}>Next-Day Dispatch (within 24 hours)</option>
-                    <option value="48_hours" ${(m.fulfillmentSla) === '48_hours' ? 'selected' : ''}>Standard Dispatch (within 48 hours)</option>
+                  <select class="select" id="prof-sla" name="fulfillmentSla" ${!canEdit || isInReview ? 'disabled' : ''}>
+                    <option value="same_day" ${fulfillmentSla === 'same_day' ? 'selected' : ''}>Same-Day Dispatch (under 12 hours) — Recommended for Top Merchant Rank</option>
+                    <option value="next_day" ${fulfillmentSla === 'next_day' ? 'selected' : ''}>Next-Day Dispatch (within 24 hours)</option>
+                    <option value="48_hours" ${fulfillmentSla === '48_hours' ? 'selected' : ''}>Standard Dispatch (within 48 hours)</option>
                   </select>
                   <span class="field-help">Orders not accepted within this SLA risk automated buyer escrow refund.</span>
                 </div>
@@ -2542,15 +2576,18 @@ function renderProfileView() {
                   <div class="vacation-mode-info">
                     <div class="vacation-mode-title">
                       ${icon('power')} <span>Vacation Mode (Pause Orders)</span>
+                      ${isVacation ? '<span class="status-pill status-pill-warning" style="font-size:11px;">Active Away</span>' : ''}
                     </div>
                     <p class="vacation-mode-desc">
-                      Temporarily pause checkout for your listings. Buyers can view your catalogue, but purchasing is disabled until you resume operations.
+                      Temporarily pause checkout for your listings. Buyers can view your catalogue, but purchasing is disabled until you resume operations. Existing orders must still be fulfilled.
                     </p>
                   </div>
-                  <label class="switch-toggle" for="prof-vacation-toggle">
-                    <input type="checkbox" id="prof-vacation-toggle" name="vacationMode" ${isVacation ? 'checked' : ''} />
-                    <span class="switch-slider"></span>
-                  </label>
+                  <div>
+                    <button type="button" class="btn ${isVacation ? 'btn-primary' : 'btn-secondary'} btn-sm" data-action="open-vacation-modal" ${(!isRegistered || m.status !== 'active' || !canEdit) ? 'disabled' : ''}>
+                      ${icon('power')} ${isVacation ? 'Resume Store Operations' : 'Pause Orders (Vacation)'}
+                    </button>
+                    ${(!isRegistered || m.status !== 'active') ? `<div class="field-help" style="font-size:11px;margin-top:4px;">Available once store registration is active.</div>` : ''}
+                  </div>
                 </div>
               </div>
             </div>
@@ -2572,19 +2609,19 @@ function renderProfileView() {
               <div class="card-body">
                 <div class="form-group">
                   <label class="form-label" for="prof-email">Dedicated Support Email <span style="color:var(--rose-600);">*</span></label>
-                  <input class="input" id="prof-email" name="contactEmail" type="email" value="${escapeAttribute(m.contactEmail || '')}" required />
+                  <input class="input" id="prof-email" name="contactEmail" type="email" value="${escapeAttribute(contactEmail)}" ${!canEdit || isInReview ? 'readonly' : ''} required />
                   <span class="field-help">Buyer transaction receipts list this support email.</span>
                 </div>
 
                 <div class="form-group">
                   <label class="form-label" for="prof-phone">Customer Support Hotline <span style="color:var(--rose-600);">*</span></label>
-                  <input class="input" id="prof-phone" name="contactPhone" type="tel" value="${escapeAttribute(m.contactPhone || '')}" required />
+                  <input class="input" id="prof-phone" name="contactPhone" type="tel" value="${escapeAttribute(contactPhone)}" ${!canEdit || isInReview ? 'readonly' : ''} required />
                 </div>
 
                 <div class="form-group">
                   <label class="form-label" for="prof-whatsapp">WhatsApp Business Line</label>
                   <div style="display:flex;gap:8px;">
-                    <input class="input" id="prof-whatsapp" name="whatsappPhone" type="tel" placeholder="+234 812 000 0000" value="${escapeAttribute(m.whatsappPhone || m.contactPhone || '')}" />
+                    <input class="input" id="prof-whatsapp" name="whatsappPhone" type="tel" placeholder="+234 812 000 0000" value="${escapeAttribute(whatsappPhone || '')}" ${!canEdit || isInReview ? 'readonly' : ''} />
                     <button type="button" class="btn btn-secondary" data-action="test-whatsapp" title="Test WhatsApp chat formatting">
                       ${icon('message-circle')} Test
                     </button>
@@ -2601,83 +2638,141 @@ function renderProfileView() {
                   <div class="profile-section-icon">${icon('shield-check')}</div>
                   <div>
                     <h2 class="card-title">Legal Entity & KYC Compliance</h2>
-                    <p class="card-subtitle">${isRegistered ? 'Verified credentials for marketplace trust & payouts.' : 'Submit CAC & Director identity to complete registration.'}</p>
+                    <p class="card-subtitle">${isRegistered ? 'Verified credentials for marketplace trust & payouts.' : (isInReview ? 'Credentials submitted and undergoing verification.' : 'Submit CAC & Director identity to complete registration.')}</p>
                   </div>
                 </div>
                 <span class="compliance-badge ${isRegistered ? 'verified' : 'pending'}">
-                  ${icon(isRegistered ? 'check' : 'clock')} ${isRegistered ? 'Approved' : 'Action Required'}
+                  ${icon(isRegistered ? 'check' : (isInReview ? 'clock' : 'alert-circle'))} ${isRegistered ? 'Approved' : (isInReview ? 'In Review' : 'Action Required')}
                 </span>
               </div>
               <div class="card-body">
                 ${isRegistered ? `
-                  <div class="compliance-verified-banner verified">
-                    <div class="compliance-shield-icon">${icon('shield-check')}</div>
-                    <div>
-                      <div style="font-weight:700;font-size:13.5px;color:var(--forest-950);">
-                        Corporate Compliance Verified (Tier 2 Merchant)
-                      </div>
-                      <div style="font-size:12px;color:var(--ink-secondary);margin-top:2px;line-height:1.4;">
-                        CAC RC/BN filings and Director identity verified by SellFast Risk & Legal. Verification Ref: <strong style="font-family:var(--font-numbers);">SFBF-CAC-2026-9281</strong>.
+                  ${viewer.isOwner ? `
+                    <div class="compliance-verified-banner verified">
+                      <div class="compliance-shield-icon">${icon('shield-check')}</div>
+                      <div>
+                        <div style="font-weight:700;font-size:13.5px;color:var(--forest-950);">
+                          Corporate Compliance Verified (Tier 2 Merchant)
+                        </div>
+                        <div style="font-size:12px;color:var(--ink-secondary);margin-top:2px;line-height:1.4;">
+                          CAC RC/BN filings and Director identity verified by SellFast Risk & Legal.
+                        </div>
                       </div>
                     </div>
-                  </div>
 
+                    <div class="form-group" style="margin-top:16px;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <label class="form-label" for="prof-cac" style="margin:0;">CAC Registration Number (RC / BN)</label>
+                        <span class="field-locked-pill">${icon('check')} Verified & Locked</span>
+                      </div>
+                      <input class="input" id="prof-cac" name="cacNumber" value="${escapeAttribute(state.verificationData?.cacNumber || '—')}" readonly style="background:var(--page-subtle);font-family:var(--font-numbers);font-weight:700;" />
+                    </div>
+
+                    <div class="form-group">
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <label class="form-label" for="prof-tin" style="margin:0;">Tax Identification Number (TIN)</label>
+                        <span class="field-locked-pill">${icon('check')} Verified</span>
+                      </div>
+                      <input class="input" id="prof-tin" name="tinNumber" value="${escapeAttribute(state.verificationData?.tinNumber || '—')}" readonly style="background:var(--page-subtle);font-family:var(--font-numbers);font-weight:700;" />
+                    </div>
+
+                    <div class="form-group">
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <label class="form-label" for="prof-nin" style="margin:0;">Director National Identity (NIN)</label>
+                        <span class="field-locked-pill">${icon('check')} Verified & Masked</span>
+                      </div>
+                      <input class="input" id="prof-nin" name="directorNin" value="${escapeAttribute(state.verificationData?.directorNinLast4 ? `•••• •••• ${state.verificationData.directorNinLast4}` : '•••• •••• ••••')}" readonly style="background:var(--page-subtle);font-family:var(--font-numbers);font-weight:700;" />
+                    </div>
+
+                    <div style="font-size:11.5px;color:var(--ink-muted);line-height:1.4;margin-top:10px;">
+                      ${icon('lock')} Legal entity records are locked for escrow protection. To update corporate filings, submit a ticket to <a href="mailto:compliance@sellfastbuyfast.com" style="color:var(--forest-700);font-weight:700;">compliance@sellfastbuyfast.com</a>.
+                    </div>
+                  ` : `
+                    <div class="callout-info-box">
+                      <div class="callout-info-icon">${icon('lock')}</div>
+                      <div class="callout-info-text">
+                        <strong>Restricted Access:</strong> Legal entity credentials, CAC filings, and director identification are confidential and viewable only by the store owner.
+                      </div>
+                    </div>
+                  `}
+                ` : (isInReview ? `
+                  <div class="callout-info-box" style="background:#fff7ed;border-color:#fed7aa;">
+                    <div class="callout-info-icon" style="color:#ea580c;">${icon('clock')}</div>
+                    <div class="callout-info-text" style="color:#9a3412;">
+                      <strong>Documents Under Review:</strong> CAC corporate documents, Director National Identity Number, and proof of address are currently undergoing security verification.
+                    </div>
+                  </div>
                   <div class="form-group" style="margin-top:16px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                      <label class="form-label" for="prof-cac" style="margin:0;">CAC Registration Number (RC / BN)</label>
-                      <span class="field-locked-pill">${icon('check')} Verified & Locked</span>
-                    </div>
-                    <input class="input" id="prof-cac" name="cacNumber" value="${escapeAttribute(m.cacNumber || 'RC-1892041')}" readonly style="background:var(--page-subtle);font-family:var(--font-numbers);font-weight:700;" />
-                  </div>
-
-                  <div class="form-group">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                      <label class="form-label" for="prof-tin" style="margin:0;">Tax Identification Number (TIN)</label>
-                      <span class="field-locked-pill">${icon('check')} Verified</span>
-                    </div>
-                    <input class="input" id="prof-tin" name="tinNumber" value="${escapeAttribute(m.tinNumber || '24891024-0001')}" readonly style="background:var(--page-subtle);font-family:var(--font-numbers);font-weight:700;" />
-                  </div>
-
-                  <div class="form-group">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                      <label class="form-label" for="prof-nin" style="margin:0;">Director National Identity (NIN)</label>
-                      <span class="field-locked-pill">${icon('check')} Verified & Masked</span>
-                    </div>
-                    <input class="input" id="prof-nin" name="directorNin" value="${escapeAttribute(m.directorNin ? m.directorNin.slice(0, 4) + ' •••• ' + m.directorNin.slice(-4) : '8392 •••• 4821')}" readonly style="background:var(--page-subtle);font-family:var(--font-numbers);font-weight:700;" />
-                  </div>
-
-                  <div style="font-size:11.5px;color:var(--ink-muted);line-height:1.4;margin-top:10px;">
-                    ${icon('lock')} Legal entity records are locked for escrow protection. To update corporate filings, submit a ticket to <a href="mailto:compliance@sellfastbuyfast.com" style="color:var(--forest-700);font-weight:700;">compliance@sellfastbuyfast.com</a>.
+                    <label class="form-label">Review Status</label>
+                    <input class="input" value="Pending Operations Approval" readonly style="background:var(--page-subtle);font-weight:600;" />
                   </div>
                 ` : `
-                  <div class="compliance-verified-banner pending">
-                    <div class="compliance-shield-icon" style="color:#b45309;">${icon('clock')}</div>
-                    <div>
-                      <div style="font-weight:700;font-size:13.5px;color:var(--forest-950);">
-                        Business Registration Required
-                      </div>
-                      <div style="font-size:12px;color:var(--ink-secondary);margin-top:2px;line-height:1.4;">
-                        Enter your CAC corporate number, TIN, and Director NIN to initiate verification and unlock store operations.
+                  ${canSubmit ? `
+                    <div class="compliance-verified-banner pending">
+                      <div class="compliance-shield-icon" style="color:#b45309;">${icon('clock')}</div>
+                      <div>
+                        <div style="font-weight:700;font-size:13.5px;color:var(--forest-950);">
+                          Corporate Registration Required
+                        </div>
+                        <div style="font-size:12px;color:var(--ink-secondary);margin-top:2px;line-height:1.4;">
+                          Enter your CAC corporate number, Director NIN, and attach verification documents to initiate review and unlock escrow payouts.
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div class="form-group" style="margin-top:16px;">
-                    <label class="form-label" for="prof-cac">CAC Registration Number (RC / BN) <span style="color:var(--rose-600);">*</span></label>
-                    <input class="input" id="prof-cac" name="cacNumber" value="${escapeAttribute(m.cacNumber || '')}" placeholder="e.g. RC-1849202 or BN-3948201" required />
-                    <span class="field-help">Incorporated Companies (RC) or Registered Business Names (BN).</span>
-                  </div>
+                    <div class="form-group" style="margin-top:16px;">
+                      <label class="form-label" for="prof-cac">CAC Registration Number (RC / BN) <span style="color:var(--rose-600);">*</span></label>
+                      <input class="input" id="prof-cac" name="cacNumber" placeholder="e.g. RC-1849202 or BN-3948201" required />
+                      <span class="field-help">Incorporated Companies (RC) or Registered Business Names (BN).</span>
+                    </div>
 
-                  <div class="form-group">
-                    <label class="form-label" for="prof-tin">Tax Identification Number (TIN) <span class="table-sub-text">(optional)</span></label>
-                    <input class="input" id="prof-tin" name="tinNumber" value="${escapeAttribute(m.tinNumber || '')}" placeholder="e.g. 24819024-0001" />
-                  </div>
+                    <div class="form-group">
+                      <label class="form-label" for="prof-tin">Tax Identification Number (TIN) <span class="table-sub-text">(optional)</span></label>
+                      <input class="input" id="prof-tin" name="tinNumber" placeholder="e.g. 24819024-0001" />
+                    </div>
 
-                  <div class="form-group">
-                    <label class="form-label" for="prof-nin">Director NIN (11 Digits) <span style="color:var(--rose-600);">*</span></label>
-                    <input class="input" id="prof-nin" name="directorNin" maxlength="11" value="${escapeAttribute(m.directorNin || '')}" placeholder="11-digit National Identity Number" required />
-                  </div>
-                `}
+                    <div class="form-group">
+                      <label class="form-label" for="prof-nin">Director NIN (11 Digits) <span style="color:var(--rose-600);">*</span></label>
+                      <input class="input" id="prof-nin" name="directorNin" type="password" maxlength="11" placeholder="11-digit National Identity Number" autocomplete="off" required />
+                      <span class="field-help">Encrypted at rest using AES-256-GCM. Never stored or returned in plaintext.</span>
+                    </div>
+
+                    <div class="form-group">
+                      <label class="form-label" for="prof-id-type">Director Identity Document Type <span style="color:var(--rose-600);">*</span></label>
+                      <select class="select" id="prof-id-type" name="idType" required>
+                        <option value="national_id">National Identity Number (NIN Slip / Card)</option>
+                        <option value="voters_card">INEC Voter's Card</option>
+                        <option value="drivers_license">FRSC Driver's License</option>
+                        <option value="passport">Nigerian International Passport</option>
+                      </select>
+                    </div>
+
+                    <div class="kyc-file-card" style="margin-top:14px;">
+                      <label class="form-label" for="prof-id-doc" style="margin-bottom:4px;">
+                        Upload Government Identity Document <span style="color:var(--rose-600);">*</span>
+                      </label>
+                      <span class="field-help" style="display:block;margin-bottom:8px;">PDF, JPEG, or PNG (maximum 10 MiB). Private encrypted storage.</span>
+                      <input type="file" id="prof-id-doc" name="idDocumentFile" accept=".pdf,.jpg,.jpeg,.png" style="font-size:12.5px;" required />
+                      <div id="prof-id-doc-info" class="file-info-text">${state.selectedIdDocFile ? `Selected: ${escapeHtml(state.selectedIdDocFile.name)} (${Math.round(state.selectedIdDocFile.size / 1024)} KB)` : 'No file chosen'}</div>
+                    </div>
+
+                    <div class="kyc-file-card" style="margin-top:14px;">
+                      <label class="form-label" for="prof-utility-bill" style="margin-bottom:4px;">
+                        Upload Proof of Address / Utility Bill <span style="color:var(--rose-600);">*</span>
+                      </label>
+                      <span class="field-help" style="display:block;margin-bottom:8px;">Electricity bill, water bill, or bank statement under 3 months old (PDF, JPEG, or PNG ≤ 10 MiB).</span>
+                      <input type="file" id="prof-utility-bill" name="utilityBillFile" accept=".pdf,.jpg,.jpeg,.png" style="font-size:12.5px;" required />
+                      <div id="prof-utility-bill-info" class="file-info-text">${state.selectedUtilityBillFile ? `Selected: ${escapeHtml(state.selectedUtilityBillFile.name)} (${Math.round(state.selectedUtilityBillFile.size / 1024)} KB)` : 'No file chosen'}</div>
+                    </div>
+                  ` : `
+                    <div class="callout-info-box">
+                      <div class="callout-info-icon">${icon('lock')}</div>
+                      <div class="callout-info-text">
+                        <strong>Owner Permission Required:</strong> Only the store owner can upload corporate documents, enter director identity details, and submit merchant registration.
+                      </div>
+                    </div>
+                  `}
+                `)}
               </div>
             </div>
 
@@ -2703,7 +2798,7 @@ function renderProfileView() {
                 </div>
                 <div class="account-meta-row">
                   <span class="account-meta-label">Security Role</span>
-                  <span class="account-meta-val" style="font-weight:700;color:var(--forest-800);">${escapeHtml(state.overview?.viewer?.memberRole || 'Store Owner')}</span>
+                  <span class="account-meta-val" style="font-weight:700;color:var(--forest-800);">${escapeHtml(viewer.memberRole || 'owner')}</span>
                 </div>
                 <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border-light);display:flex;justify-content:space-between;align-items:center;">
                   <span style="font-size:12px;color:var(--ink-muted);">End active authenticated session</span>
@@ -2722,20 +2817,30 @@ function renderProfileView() {
             ${icon('info')}
             <span>${isRegistered 
               ? 'Warehouse pickup address and customer WhatsApp are synchronized with GIG / Fez couriers.' 
-              : 'Submit your CAC and warehouse address to complete merchant onboarding.'}</span>
+              : (isInReview 
+                ? 'Registration is currently under review by SellFast Operations.' 
+                : 'Submit your CAC, Director NIN, warehouse address, and documents to complete onboarding.')}</span>
           </div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-            <button type="button" class="btn btn-secondary" data-action="discard-profile-changes" title="Discard unsaved edits and reload saved profile">
-              ${icon('rotate-ccw')} Discard Changes
-            </button>
-            <button type="button" class="btn btn-secondary" data-action="save-profile-draft" ${state.busy === 'update-profile' ? 'disabled' : ''} title="Save current progress as draft without publishing">
-              ${icon('file-text')} Save as Draft
-            </button>
-            <button type="submit" class="btn btn-primary" ${state.busy === 'update-profile' ? 'disabled' : ''}>
-              ${state.busy === 'update-profile' 
-                ? 'Saving…' 
-                : (isRegistered ? `${icon('save')} Save Store Profile` : `${icon('send')} Submit Registration for Review`)}
-            </button>
+            ${isInReview ? `
+              <button type="button" class="btn btn-secondary" disabled>
+                ${icon('clock')} Registration Under Review
+              </button>
+            ` : `
+              <button type="button" class="btn btn-secondary" data-action="discard-profile-changes" ${state.busy ? 'disabled' : ''} title="Discard unsaved edits and reload saved profile">
+                ${icon('rotate-ccw')} Discard Changes
+              </button>
+              <button type="button" class="btn btn-secondary" data-action="save-profile-draft" ${state.busy ? 'disabled' : ''} title="Save current non-legal progress to server as draft">
+                ${icon('file-text')} Save as Draft
+              </button>
+              <button type="submit" class="btn btn-primary" ${state.busy || (isNotRegistered && !canSubmit) ? 'disabled' : ''}>
+                ${state.busy === 'submit-registration' 
+                  ? 'Submitting Registration…' 
+                  : (state.busy === 'update-profile' 
+                    ? 'Saving Store Profile…' 
+                    : (isRegistered ? `${icon('save')} Save Store Profile` : `${icon('send')} Submit Registration for Review`))}
+              </button>
+            `}
           </div>
         </div>
       </form>
@@ -3049,6 +3154,47 @@ function renderModal() {
       </div>`;
   }
 
+  if (state.modal.type === 'vacation-mode-confirm') {
+    const isEnabling = Boolean(state.modal.nextEnabled);
+    return `
+      <div class="modal-backdrop">
+        <form class="modal-dialog" id="vacation-mode-form" style="max-width:480px;">
+          <div class="modal-header">
+            <div>
+              <h3 class="modal-title">${isEnabling ? 'Pause Orders (Enable Vacation Mode)' : 'Resume Store Operations'}</h3>
+              <p class="table-sub-text">${isEnabling ? 'Temporarily pause customer checkout and incoming orders.' : 'Reactivate customer checkout and order acceptance.'}</p>
+            </div>
+            <button class="modal-close-btn" type="button" data-action="close-modal">${icon('x')}</button>
+          </div>
+          <div class="modal-body">
+            ${error}
+            <input type="hidden" name="enabled" value="${isEnabling ? 'true' : 'false'}" />
+
+            <div class="callout-info-box" style="margin-bottom:14px;background:${isEnabling ? '#fffbeb' : '#f0fdf4'};border-color:${isEnabling ? '#fde68a' : '#bbf7d0'};">
+              <div class="callout-info-icon" style="color:${isEnabling ? '#b45309' : '#15803d'};">${icon(isEnabling ? 'power' : 'check-circle')}</div>
+              <div class="callout-info-text" style="color:${isEnabling ? '#78350f' : '#14532d'};">
+                ${isEnabling 
+                  ? '<strong>Fulfillment SLA Notice:</strong> Existing paid orders in your queue remain active and must still be packed and dispatched. Browsing remains active, but purchasing is disabled.' 
+                  : '<strong>Store Opening:</strong> Shoppers will immediately be able to add listings to bag and complete escrow purchases.'}
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="vacation-reason">Reason for ${isEnabling ? 'Pausing' : 'Resuming'} Operations <span style="color:var(--rose-600);">*</span></label>
+              <textarea class="textarea" id="vacation-reason" name="reason" rows="3" minlength="3" maxlength="500" placeholder="${isEnabling ? 'e.g. Annual warehouse stock audit, national holiday closure, facility relocation...' : 'e.g. Completed stock count, regular fulfillment capacity resumed...'}" required></textarea>
+              <span class="field-help">Required compliance audit note (3–500 characters).</span>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" type="button" data-action="close-modal">Cancel</button>
+            <button class="btn ${isEnabling ? 'btn-danger' : 'btn-primary'}" type="submit" ${state.busy === 'vacation-mode' ? 'disabled' : ''}>
+              ${state.busy === 'vacation-mode' ? 'Updating…' : (isEnabling ? `${icon('power')} Pause Store Operations` : `${icon('check')} Resume Operations`)}
+            </button>
+          </div>
+        </form>
+      </div>`;
+  }
+
   return '';
 }
 
@@ -3057,7 +3203,41 @@ function renderModal() {
    ========================================================================== */
 
 function requestErrorMessage(error, fallback = 'The request could not be completed.') {
-  return error?.message || fallback;
+  if (!error) return fallback;
+  if (error.code === 'VALIDATION_ERROR') {
+    return error.message || 'Please correct the highlighted fields and try again.';
+  }
+  if (error.code === 'SLUG_ALREADY_EXISTS') {
+    return 'This store handle is already claimed by another merchant. Please choose a different custom handle.';
+  }
+  if (error.code === 'SLUG_RESERVED') {
+    return 'This store handle is reserved for platform operations. Please choose a standard brand name.';
+  }
+  if (error.code === 'FORBIDDEN') {
+    return error.message || 'You do not have administrative permission to modify this store.';
+  }
+  if (error.code === 'REGISTRATION_UNDER_REVIEW') {
+    return 'Your merchant registration is currently under review by Operations.';
+  }
+  if (error.code === 'REGISTRATION_LOCKED') {
+    return 'Approved legal-entity information is locked. Contact compliance@sellfastbuyfast.com for corporate amendments.';
+  }
+  if (error.code === 'KYC_UPLOAD_UNAVAILABLE') {
+    return 'Private document upload service is temporarily unavailable. Please verify your connection and try again.';
+  }
+  if (error.code === 'KYC_ENCRYPTION_UNAVAILABLE') {
+    return 'KYC security encryption service is temporarily unavailable. Please alert Operations.';
+  }
+  if (error.code === 'MERCHANT_NOT_ELIGIBLE') {
+    return error.message || 'Only an active, registered merchant can change vacation mode.';
+  }
+  if (error.code === 'MERCHANT_UNAVAILABLE') {
+    return error.message || 'The store is temporarily away and cannot accept new orders.';
+  }
+  if (error.code === 'REQUEST_IN_PROGRESS') {
+    return 'A submission request is already in progress. Please wait for completion.';
+  }
+  return error.message || fallback;
 }
 
 async function loadMerchantData() {
@@ -3073,151 +3253,54 @@ async function loadMerchantData() {
 
   try {
     const merchantId = state.merchant.id;
-    let overviewVal = null;
-    let productsVal = [];
-    let ordersVal = [];
-    let returnsVal = [];
-    let categoriesVal = [];
 
-    // Attempt Core API call first
-    try {
-      const results = await Promise.allSettled([
-        api(`/v1/vendor/merchant/${merchantId}/overview`, { signal: controller.signal }),
-        api(`/v1/catalog-management/merchant/${merchantId}/products`, { signal: controller.signal }),
-        api(`/v1/fulfilment/merchant/${merchantId}/orders`, { signal: controller.signal }),
-        api(`/v1/vendor/merchant/${merchantId}/returns`, { signal: controller.signal }),
-        api('/v1/catalog/categories', { signal: controller.signal }),
-      ]);
-      if (requestVersion !== state.dataRequestVersion) return;
+    // Call Core API endpoints exclusively
+    const results = await Promise.allSettled([
+      api(`/v1/vendor/merchant/${merchantId}/overview`, { signal: controller.signal }),
+      api(`/v1/catalog-management/merchant/${merchantId}/products`, { signal: controller.signal }),
+      api(`/v1/fulfilment/merchant/${merchantId}/orders`, { signal: controller.signal }),
+      api(`/v1/vendor/merchant/${merchantId}/returns`, { signal: controller.signal }),
+      api('/v1/catalog/categories', { signal: controller.signal }),
+    ]);
+    if (requestVersion !== state.dataRequestVersion) return;
 
-      const [overview, products, orders, returns, categories] = results;
-      if (overview.status === 'fulfilled') overviewVal = overview.value;
-      if (products.status === 'fulfilled') productsVal = products.value;
-      if (orders.status === 'fulfilled') ordersVal = orders.value;
-      if (returns.status === 'fulfilled') returnsVal = returns.value;
-      if (categories.status === 'fulfilled') categoriesVal = categories.value;
-    } catch (apiErr) {
-      console.warn('Core API unreachable, falling back to direct Supabase data:', apiErr);
+    const [overview, products, orders, returns, categories] = results;
+    if (overview.status === 'fulfilled') {
+      state.overview = overview.value;
+      state.merchant = overview.value.merchant;
+    } else {
+      throw overview.reason || new Error('Failed to load merchant overview.');
     }
 
-    // Direct Supabase fallback if Core API calls didn't fulfill data
-    if ((!overviewVal || productsVal.length === 0 || categoriesVal.length === 0) && state.client) {
+    if (products.status === 'fulfilled') state.products = products.value;
+    if (orders.status === 'fulfilled') state.orders = orders.value;
+    if (returns.status === 'fulfilled') state.returns = returns.value;
+    if (categories.status === 'fulfilled') state.categories = categories.value;
+
+    // Load server-side profile draft if merchant is not registered
+    if (state.merchant?.registrationState === 'not_registered' && state.overview?.viewer?.canEditProfile) {
       try {
-        const [pRes, oRes, cRes] = await Promise.all([
-          state.client.from('products').select('*, product_variants(*), product_media(*)').eq('merchant_id', merchantId),
-          state.client.from('orders').select('*, order_lines(*)').eq('merchant_id', merchantId),
-          state.client.from('categories').select('*'),
-        ]);
-
-        if (pRes.data && pRes.data.length > 0 && productsVal.length === 0) {
-          const invCache = getInventoryCache();
-          productsVal = pRes.data.map((p) => ({
-            id: p.id,
-            title: p.title,
-            description: p.description,
-            status: p.status || 'published',
-            categoryId: p.category_id,
-            comparePriceMinor: p.compare_price_minor,
-            variants: (p.product_variants || []).map((v) => ({
-              id: v.id,
-              sku: v.sku,
-              title: v.title,
-              priceMinor: v.price_minor,
-              availableQuantity: invCache[v.id] !== undefined ? Number(invCache[v.id]) : 25,
-              reservedQuantity: 0,
-            })),
-            media: (p.product_media || []).map((m) => ({
-              id: m.id,
-              mediaUrl: m.media_url,
-              mediaType: m.media_type || 'image',
-            })),
-            createdAt: p.created_at,
-            updatedAt: p.updated_at,
-          }));
-        }
-
-        if (oRes.data && ordersVal.length === 0) {
-          ordersVal = oRes.data.map((o) => ({
-            id: o.id,
-            orderNumber: o.order_number,
-            status: o.status,
-            totalAmountMinor: o.total_amount_minor,
-            deliveryFeeMinor: o.delivery_fee_minor,
-            createdAt: o.created_at,
-            lines: o.order_lines || [],
-          }));
-        }
-
-        if (cRes.data && cRes.data.length > 0 && categoriesVal.length === 0) {
-          categoriesVal = cRes.data.map((c) => ({
-            id: c.id,
-            name: c.name,
-            slug: c.slug,
-          }));
-        }
-
-        if (!overviewVal) {
-          overviewVal = {
-            merchant: state.merchant || { status: 'active', businessName: 'SellFast Official Store' },
-            viewer: {
-              memberRole: state.merchant?.memberRole || 'owner',
-              isOwner: true,
-            },
-            catalogue: {
-              total: productsVal.length,
-              draft: productsVal.filter((p) => p.status === 'draft').length,
-              pendingApproval: productsVal.filter((p) => p.status === 'pending_approval').length,
-              published: productsVal.filter((p) => p.status === 'published').length,
-              archived: productsVal.filter((p) => p.status === 'archived').length,
-            },
-            fulfilment: {
-              awaitingAcceptance: ordersVal.filter((o) => o.status === 'payment_confirmed').length,
-              awaitingPacking: ordersVal.filter((o) => o.status === 'processing').length,
-              inTransit: ordersVal.filter((o) => o.status === 'in_transit').length,
-            },
-            returnRequests: {
-              open: returnsVal.filter((r) => ['requested', 'approved', 'received'].includes(r.status)).length,
-              requested: returnsVal.filter((r) => r.status === 'requested').length,
-            },
-            verification: {
-              status: 'approved',
-              rejectionReason: null,
-              updatedAt: new Date().toISOString(),
-            },
-            paymentModule: {
-              status: 'deferred',
-              message: 'Payouts, settlement balances, and bank-recipient setup are unavailable until the dedicated payment module is released.',
-            },
-          };
-        }
-      } catch (fallbackErr) {
-        console.warn('Supabase fallback query error:', fallbackErr);
+        const draftRes = await api(`/v1/vendor/merchant/${merchantId}/profile/draft`, { signal: controller.signal });
+        state.profileDraft = draftRes?.draft || null;
+      } catch (draftErr) {
+        state.profileDraft = null;
       }
+    } else {
+      state.profileDraft = null;
     }
 
-    // Ensure all products reflect saved inventory units
-    const globalInvCache = getInventoryCache();
-    productsVal.forEach((p) => {
-      p.variants?.forEach((v) => {
-        if (globalInvCache[v.id] !== undefined) {
-          v.availableQuantity = Number(globalInvCache[v.id]);
-        }
-      });
-    });
-
-    const pCache = getProfileCache();
-    if (overviewVal && pCache && Object.keys(pCache).length > 0) {
-      overviewVal.merchant = { ...(overviewVal.merchant || {}), ...pCache };
-    }
-    if (state.merchant && pCache && Object.keys(pCache).length > 0) {
-      state.merchant = { ...state.merchant, ...pCache };
+    // Load legal verification data if merchant is registered and viewer is owner
+    if (state.merchant?.registrationState === 'registered' && state.overview?.viewer?.isOwner) {
+      try {
+        const verRes = await api(`/v1/vendor/merchant/${merchantId}/verification`, { signal: controller.signal });
+        state.verificationData = verRes || null;
+      } catch (verErr) {
+        state.verificationData = null;
+      }
+    } else {
+      state.verificationData = null;
     }
 
-    state.overview = overviewVal;
-    state.products = productsVal;
-    state.orders = ordersVal;
-    state.returns = returnsVal;
-    state.categories = categoriesVal;
   } catch (error) {
     if (error?.name === 'AbortError' || requestVersion !== state.dataRequestVersion) return;
     state.overview = null;
@@ -3240,76 +3323,10 @@ async function loadWorkspace() {
   state.workspaceError = '';
   render();
   try {
-    let merchantsList = [];
-    try {
-      const data = await api('/v1/vendor/me');
-      merchantsList = data.merchants || [];
-    } catch (apiError) {
-      console.warn('Core API unreachable, querying Supabase directly:', apiError);
-      if (state.client) {
-        // Query merchant memberships from Supabase
-        if (state.session?.user) {
-          const { data: memberRows } = await state.client
-            .from('merchant_members')
-            .select('merchant_id, role, merchants(*)')
-            .eq('user_id', state.session.user.id);
-
-          if (memberRows && memberRows.length > 0) {
-            merchantsList = memberRows
-              .filter((row) => row.merchants)
-              .map((row) => ({
-                id: row.merchants.id,
-                slug: row.merchants.slug,
-                businessName: row.merchants.business_name,
-                description: row.merchants.description,
-                logoUrl: row.merchants.logo_url,
-                contactEmail: row.merchants.contact_email,
-                contactPhone: row.merchants.contact_phone,
-                state: row.merchants.state,
-                lga: row.merchants.lga,
-                address: row.merchants.address,
-                status: row.merchants.status,
-                memberRole: row.role || 'owner',
-              }));
-          }
-        }
-
-        // If no explicit membership found, fetch active merchants from Supabase
-        if (merchantsList.length === 0) {
-          const { data: allMerchants } = await state.client.from('merchants').select('*');
-          if (allMerchants && allMerchants.length > 0) {
-            merchantsList = allMerchants.map((m) => ({
-              id: m.id,
-              slug: m.slug,
-              businessName: m.business_name,
-              description: m.description,
-              logoUrl: m.logo_url,
-              bannerUrl: m.banner_url,
-              contactEmail: m.contact_email,
-              contactPhone: m.contact_phone,
-              state: m.state,
-              lga: m.lga,
-              address: m.address,
-              status: m.status,
-              memberRole: 'owner',
-            }));
-          }
-        }
-      } else {
-        throw apiError;
-      }
-    }
-
-    state.merchants = merchantsList;
+    const data = await api('/v1/vendor/me');
+    state.merchants = data.merchants || [];
     const savedId = window.localStorage.getItem('sfbf-vendor-merchant-id');
     state.merchant = state.merchants.find((merchant) => merchant.id === savedId) || state.merchants[0] || null;
-
-    if (state.merchant) {
-      const pCache = getProfileCache();
-      if (pCache && Object.keys(pCache).length > 0) {
-        state.merchant = { ...state.merchant, ...pCache };
-      }
-    }
 
     if (!state.merchant) {
       state.authMode = 'onboarding';
@@ -3800,59 +3817,113 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
-  if (action === 'set-profile-reg-state') {
-    const nextState = button.dataset.state || 'registered';
-    state.profileRegistrationState = nextState;
-    if (state.merchant) {
-      state.merchant.registrationState = nextState;
-      saveProfileCache({ registrationState: nextState });
-    }
+  if (action === 'open-vacation-modal') {
+    const isVacation = Boolean(state.merchant?.vacationMode);
+    state.modal = {
+      type: 'vacation-mode-confirm',
+      nextEnabled: !isVacation,
+    };
+    state.formError = '';
     render();
-    showNotice(nextState === 'registered'
-      ? 'Switched view to Registered & Verified Enterprise Merchant.'
-      : 'Switched view to In-Progress / Unregistered Onboarding mode.');
     return;
   }
 
   if (action === 'discard-profile-changes') {
-    const saved = getProfileCache();
-    if (saved && state.merchant) {
-      state.merchant = { ...state.merchant, ...saved };
-    }
+    if (!state.merchant?.id) return;
+    state.busy = 'discard-profile';
     state.formError = '';
     render();
-    showNotice('Discarded unsaved edits. Restored saved profile.');
+    try {
+      if (state.merchant.registrationState === 'not_registered') {
+        await api(`/v1/vendor/merchant/${state.merchant.id}/profile/draft`, {
+          method: 'DELETE',
+          idempotencyScope: 'vendor-profile-draft-delete',
+        });
+      }
+      state.profileDraft = null;
+      state.selectedIdDocFile = null;
+      state.selectedUtilityBillFile = null;
+      await loadMerchantData();
+      showNotice('Discarded unsaved edits. Restored saved profile from server.');
+    } catch (err) {
+      showNotice(requestErrorMessage(err, 'Could not discard profile edits.'), 'error');
+    } finally {
+      state.busy = null;
+      render();
+    }
     return;
   }
 
   if (action === 'save-profile-draft') {
     const form = document.getElementById('business-profile-form');
-    if (form) {
-      const draftProfile = {
-        businessName: form.elements.businessName?.value.trim() || '',
-        slug: (form.elements.slug?.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-') || 'store'),
-        description: form.elements.description?.value.trim() || '',
-        logoUrl: form.elements.logoUrl?.value.trim() || '',
-        bannerUrl: form.elements.bannerUrl?.value.trim() || '',
-        contactEmail: form.elements.contactEmail?.value.trim() || '',
-        contactPhone: form.elements.contactPhone?.value.trim() || '',
-        whatsappPhone: form.elements.whatsappPhone?.value.trim() || '',
-        address: form.elements.address?.value.trim() || '',
-        lga: form.elements.lga?.value.trim() || '',
-        state: form.elements.state?.value || 'Lagos State',
-        dispatchContactName: form.elements.dispatchContactName?.value.trim() || '',
-        dispatchContactPhone: form.elements.dispatchContactPhone?.value.trim() || '',
-        fulfillmentSla: form.elements.fulfillmentSla?.value || 'same_day',
-        vacationMode: Boolean(form.elements.vacationMode?.checked),
-        cacNumber: form.elements.cacNumber?.value.trim() || '',
-        tinNumber: form.elements.tinNumber?.value.trim() || '',
-        directorNin: form.elements.directorNin?.value.trim() || '',
-        isDraft: true,
-      };
-      saveProfileCache(draftProfile);
-      if (state.merchant) state.merchant = { ...state.merchant, ...draftProfile };
-      state.formError = '';
-      showNotice('Store profile progress saved as draft.');
+    if (!form || !state.merchant?.id) return;
+
+    const draftData = {};
+    const businessName = form.elements.businessName?.value.trim();
+    if (businessName) draftData.businessName = businessName;
+
+    const slug = form.elements.slug?.value.trim();
+    if (slug) draftData.slug = slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+    const description = form.elements.description?.value.trim();
+    if (description) draftData.description = description;
+
+    const logoUrl = form.elements.logoUrl?.value.trim();
+    if (logoUrl) draftData.logoUrl = logoUrl;
+
+    const bannerUrl = form.elements.bannerUrl?.value.trim();
+    if (bannerUrl) draftData.bannerUrl = bannerUrl;
+
+    const contactEmail = form.elements.contactEmail?.value.trim();
+    if (contactEmail) draftData.contactEmail = contactEmail;
+
+    const contactPhone = form.elements.contactPhone?.value.trim();
+    if (contactPhone) draftData.contactPhone = contactPhone;
+
+    const whatsappPhone = form.elements.whatsappPhone?.value.trim();
+    if (whatsappPhone) draftData.whatsappPhone = whatsappPhone;
+
+    const address = form.elements.address?.value.trim();
+    if (address) draftData.address = address;
+
+    const lga = form.elements.lga?.value.trim();
+    if (lga) draftData.lga = lga;
+
+    const stateVal = form.elements.state?.value;
+    if (stateVal) draftData.state = stateVal;
+
+    const dispatchContactName = form.elements.dispatchContactName?.value.trim();
+    if (dispatchContactName) draftData.dispatchContactName = dispatchContactName;
+
+    const dispatchContactPhone = form.elements.dispatchContactPhone?.value.trim();
+    if (dispatchContactPhone) draftData.dispatchContactPhone = dispatchContactPhone;
+
+    const fulfillmentSla = form.elements.fulfillmentSla?.value;
+    if (fulfillmentSla) draftData.fulfillmentSla = fulfillmentSla;
+
+    if (Object.keys(draftData).length === 0) {
+      showNotice('Please enter at least one store field before saving draft.', 'warning');
+      return;
+    }
+
+    state.busy = 'save-profile-draft';
+    state.formError = '';
+    render();
+
+    try {
+      const res = await api(`/v1/vendor/merchant/${state.merchant.id}/profile/draft`, {
+        method: 'PUT',
+        idempotencyScope: 'vendor-store-profile-draft',
+        body: draftData,
+      });
+      state.profileDraft = res?.draft || draftData;
+      showNotice('Store profile progress saved to server as draft.');
+    } catch (err) {
+      state.formError = requestErrorMessage(err, 'Failed to save profile draft.');
+      showNotice(state.formError, 'error');
+    } finally {
+      state.busy = null;
+      render();
     }
     return;
   }
@@ -3967,6 +4038,11 @@ document.addEventListener('click', async (event) => {
   }
 
   if (action === 'sim-add-to-bag') {
+    if (state.merchant?.vacationMode) {
+      showSimToast('Store is away · Purchasing paused');
+      showNotice('Store is currently in vacation mode. Orders are paused.', 'warning');
+      return;
+    }
     const priceText = document.getElementById('detail-price-text')?.textContent || document.getElementById('preview-price-text')?.textContent || '₦45,000';
     const originalText = button.innerHTML;
     button.innerHTML = 'Added to Bag';
@@ -3976,6 +4052,11 @@ document.addEventListener('click', async (event) => {
   }
 
   if (action === 'sim-buy-escrow') {
+    if (state.merchant?.vacationMode) {
+      showSimToast('Store is away · Checkout paused');
+      showNotice('Store is currently in vacation mode. Checkout is paused.', 'warning');
+      return;
+    }
     const priceText = document.getElementById('detail-price-text')?.textContent || '₦45,000';
     showSimToast(`Escrow Checkout: ${priceText} held in SellFast ledger`);
     return;
@@ -4344,6 +4425,88 @@ document.addEventListener('input', (event) => {
 });
 
 document.addEventListener('change', (event) => {
+  if (event.target.id === 'prof-id-doc') {
+    const file = event.target.files?.[0];
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png'];
+    const maxBytes = 10 * 1024 * 1024;
+    const infoEl = document.getElementById('prof-id-doc-info');
+    if (!file) {
+      state.selectedIdDocFile = null;
+      if (infoEl) {
+        infoEl.textContent = 'No file chosen';
+        infoEl.style.color = '';
+      }
+      return;
+    }
+    if (!allowedTypes.includes(file.type)) {
+      state.selectedIdDocFile = null;
+      event.target.value = '';
+      if (infoEl) {
+        infoEl.textContent = 'Invalid file type. Please upload a PDF, JPEG, or PNG file.';
+        infoEl.style.color = 'var(--rose-600)';
+      }
+      showNotice('Invalid file format. Only PDF, JPG, and PNG are accepted.', 'error');
+      return;
+    }
+    if (file.size > maxBytes) {
+      state.selectedIdDocFile = null;
+      event.target.value = '';
+      if (infoEl) {
+        infoEl.textContent = `File exceeds maximum size of 10 MiB (${(file.size / (1024 * 1024)).toFixed(1)} MB).`;
+        infoEl.style.color = 'var(--rose-600)';
+      }
+      showNotice('File exceeds maximum size of 10 MiB.', 'error');
+      return;
+    }
+    state.selectedIdDocFile = file;
+    if (infoEl) {
+      infoEl.textContent = `Selected: ${file.name} (${Math.round(file.size / 1024)} KB)`;
+      infoEl.style.color = 'var(--forest-800)';
+    }
+    return;
+  }
+
+  if (event.target.id === 'prof-utility-bill') {
+    const file = event.target.files?.[0];
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png'];
+    const maxBytes = 10 * 1024 * 1024;
+    const infoEl = document.getElementById('prof-utility-bill-info');
+    if (!file) {
+      state.selectedUtilityBillFile = null;
+      if (infoEl) {
+        infoEl.textContent = 'No file chosen';
+        infoEl.style.color = '';
+      }
+      return;
+    }
+    if (!allowedTypes.includes(file.type)) {
+      state.selectedUtilityBillFile = null;
+      event.target.value = '';
+      if (infoEl) {
+        infoEl.textContent = 'Invalid file type. Please upload a PDF, JPEG, or PNG file.';
+        infoEl.style.color = 'var(--rose-600)';
+      }
+      showNotice('Invalid file format. Only PDF, JPG, and PNG are accepted.', 'error');
+      return;
+    }
+    if (file.size > maxBytes) {
+      state.selectedUtilityBillFile = null;
+      event.target.value = '';
+      if (infoEl) {
+        infoEl.textContent = `File exceeds maximum size of 10 MiB (${(file.size / (1024 * 1024)).toFixed(1)} MB).`;
+        infoEl.style.color = 'var(--rose-600)';
+      }
+      showNotice('File exceeds maximum size of 10 MiB.', 'error');
+      return;
+    }
+    state.selectedUtilityBillFile = file;
+    if (infoEl) {
+      infoEl.textContent = `Selected: ${file.name} (${Math.round(file.size / 1024)} KB)`;
+      infoEl.style.color = 'var(--forest-800)';
+    }
+    return;
+  }
+
   if (event.target.id === 'catalogue-category-filter') {
     state.catalogueCategory = event.target.value;
     render();
@@ -4866,138 +5029,296 @@ document.addEventListener('submit', async (event) => {
     return;
   }
 
-  // Profile Form (Store Profile & Settings)
-  if (form.id === 'business-profile-form') {
-    const businessName = form.elements.businessName?.value.trim();
-    const slug = (form.elements.slug?.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-') || 'store');
-    const description = form.elements.description?.value.trim() || '';
-    const logoUrl = form.elements.logoUrl?.value.trim() || '';
-    const bannerUrl = form.elements.bannerUrl?.value.trim() || '';
-    const contactEmail = form.elements.contactEmail?.value.trim();
-    const contactPhone = form.elements.contactPhone?.value.trim();
-    const whatsappPhone = form.elements.whatsappPhone?.value.trim() || contactPhone;
-    const address = form.elements.address?.value.trim();
-    const lga = form.elements.lga?.value.trim();
-    const stateVal = form.elements.state?.value || 'Lagos State';
-    const dispatchContactName = form.elements.dispatchContactName?.value.trim() || '';
-    const dispatchContactPhone = form.elements.dispatchContactPhone?.value.trim() || '';
-    const fulfillmentSla = form.elements.fulfillmentSla?.value || 'same_day';
-    const vacationMode = Boolean(form.elements.vacationMode?.checked);
-    const cacNumber = form.elements.cacNumber?.value.trim() || '';
-    const tinNumber = form.elements.tinNumber?.value.trim() || '';
-    const directorNin = form.elements.directorNin?.value.trim() || '';
+  // Vacation Mode Form (Pause / Resume Store Operations)
+  if (form.id === 'vacation-mode-form') {
+    if (!state.merchant?.id) return;
+    const isEnabling = form.elements.enabled?.value === 'true';
+    const reason = form.elements.reason?.value.trim();
 
-    if (!businessName || !contactEmail || !contactPhone || !address || !lga) {
-      state.formError = 'Please provide business name, contact email, phone, and complete warehouse address.';
+    if (!reason || reason.length < 3 || reason.length > 500) {
+      state.formError = 'Please provide a clear reason between 3 and 500 characters.';
       render();
       return;
     }
 
-    const updatedProfile = {
-      businessName,
-      slug,
-      description,
-      logoUrl,
-      bannerUrl,
-      contactEmail,
-      contactPhone,
-      whatsappPhone,
-      address,
-      lga,
-      state: stateVal,
-      dispatchContactName,
-      dispatchContactPhone,
-      fulfillmentSla,
-      vacationMode,
-      cacNumber,
-      tinNumber,
-      directorNin,
-      status: vacationMode ? 'suspended' : 'active',
-    };
-
-    const isUnregistered = (state.profileRegistrationState === 'not_registered') || (state.merchant?.registrationState === 'not_registered');
-    if (isUnregistered) {
-      if (!cacNumber || !directorNin) {
-        state.formError = 'Please provide your CAC Registration Number and Director NIN to complete merchant registration.';
-        render();
-        return;
-      }
-      updatedProfile.registrationState = 'registered';
-      state.profileRegistrationState = 'registered';
-    }
-
-    if (state.merchant) {
-      state.merchant = { ...state.merchant, ...updatedProfile };
-    }
-    if (state.overview?.merchant) {
-      state.overview.merchant = { ...state.overview.merchant, ...updatedProfile };
-    }
-    saveProfileCache(updatedProfile);
+    state.busy = 'vacation-mode';
     state.formError = '';
     render();
-    showNotice(isUnregistered
-      ? 'Registration submitted for KYC & CAC verification! Store profile is now fully registered.'
-      : 'Store profile and warehouse pickup details updated successfully.');
 
     try {
-      if (state.merchant?.id) {
-        await api(`/v1/vendor/merchant/${state.merchant.id}/profile`, {
-          method: 'PATCH',
-          idempotencyScope: 'vendor-profile',
-          body: updatedProfile,
-        });
-      }
-    } catch (e) {
-      if (state.client && state.merchant?.id) {
-        try {
-          await state.client.from('merchants').update({
-            business_name: businessName,
-            slug,
-            description,
-            logo_url: logoUrl || null,
-            banner_url: bannerUrl || null,
-            contact_email: contactEmail,
-            contact_phone: contactPhone,
-            address,
-            lga,
-            state: stateVal,
-            status: vacationMode ? 'suspended' : 'active',
-          }).eq('id', state.merchant.id);
-        } catch (dbErr) {
-          console.warn('Direct Supabase merchant update warning:', dbErr);
+      const updatedMerchant = await api(`/v1/vendor/merchant/${state.merchant.id}/vacation-mode`, {
+        method: 'POST',
+        idempotencyScope: 'vendor-vacation-mode',
+        body: { enabled: isEnabling, reason },
+      });
+
+      if (updatedMerchant) {
+        state.merchant = { ...state.merchant, ...updatedMerchant };
+        if (state.overview?.merchant) {
+          state.overview.merchant = { ...state.overview.merchant, ...updatedMerchant };
         }
       }
+      state.modal = null;
+      showNotice(isEnabling 
+        ? 'Store operations paused (vacation mode active). New shopper purchases paused.' 
+        : 'Store operations resumed! Store is open for orders.');
+    } catch (err) {
+      state.formError = requestErrorMessage(err, 'Failed to update vacation mode.');
+    } finally {
+      state.busy = null;
+      render();
     }
     return;
   }
 
-  // Verification resubmission Form
-  if (form.id === 'verification-submission-form') {
-    const cacNumber = form.elements.cacNumber.value.trim();
-    const tinNumber = form.elements.tinNumber.value.trim();
-    const idType = form.elements.idType.value;
-    const idDocumentUrl = form.elements.idDocumentUrl.value.trim();
-    const utilityBillUrl = form.elements.utilityBillUrl.value.trim();
+  // Profile Form (Store Profile & Settings)
+  if (form.id === 'business-profile-form') {
+    if (!state.merchant?.id) return;
+    const isRegistered = state.merchant.registrationState === 'registered';
+    const isInReview = state.merchant.registrationState === 'in_review';
+    const isNotRegistered = state.merchant.registrationState === 'not_registered';
 
-    if (!cacNumber || !idType || !safeUrl(idDocumentUrl) || !safeUrl(utilityBillUrl)) {
-      state.formError = 'Enter the CAC number, identity type, and valid document URLs.';
+    if (isInReview) {
+      showNotice('Your merchant registration is currently under review by Operations.', 'warning');
+      return;
+    }
+
+    const businessName = form.elements.businessName?.value.trim();
+    const rawSlug = form.elements.slug?.value.trim() || 'store';
+    const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const description = form.elements.description?.value.trim() || null;
+    const logoUrl = form.elements.logoUrl?.value.trim() || null;
+    const bannerUrl = form.elements.bannerUrl?.value.trim() || null;
+    const contactEmail = form.elements.contactEmail?.value.trim();
+    const contactPhone = form.elements.contactPhone?.value.trim();
+    const whatsappPhone = form.elements.whatsappPhone?.value.trim() || null;
+    const address = form.elements.address?.value.trim();
+    const lga = form.elements.lga?.value.trim();
+    const stateVal = form.elements.state?.value || 'Lagos State';
+    const dispatchContactName = form.elements.dispatchContactName?.value.trim() || null;
+    const dispatchContactPhone = form.elements.dispatchContactPhone?.value.trim() || null;
+    const fulfillmentSla = form.elements.fulfillmentSla?.value || 'same_day';
+
+    if (!businessName || !contactEmail || !contactPhone || !address || !lga) {
+      state.formError = 'Please provide business name, contact email, contact phone, and complete warehouse address.';
       render();
       return;
     }
 
-    render();
-    showNotice('Updated verification documents submitted for Operations review.');
+    // Branch A: Registered Merchant -> PATCH /profile (Strict StoreProfilePatch)
+    if (isRegistered) {
+      if (!state.overview?.viewer?.canEditProfile) {
+        state.formError = 'You do not have administrative permission to modify this store profile.';
+        render();
+        return;
+      }
 
-    try {
-      await api(`/v1/vendor/merchant/${state.merchant.id}/verification`, {
-        method: 'POST',
-        idempotencyScope: 'vendor-verification',
-        body: { cacNumber, tinNumber: tinNumber || undefined, idType, idDocumentUrl, utilityBillUrl },
-      });
-    } catch (e) {
-      // Handled gracefully in offline mode
+      state.busy = 'update-profile';
+      state.formError = '';
+      render();
+
+      const patchPayload = {
+        businessName,
+        slug,
+        description,
+        logoUrl,
+        bannerUrl,
+        contactEmail,
+        contactPhone,
+        whatsappPhone,
+        address,
+        lga,
+        state: stateVal,
+        dispatchContactName,
+        dispatchContactPhone,
+        fulfillmentSla,
+      };
+
+      try {
+        const updatedMerchant = await api(`/v1/vendor/merchant/${state.merchant.id}/profile`, {
+          method: 'PATCH',
+          idempotencyScope: 'vendor-store-profile-update',
+          body: patchPayload,
+        });
+
+        if (updatedMerchant) {
+          state.merchant = { ...state.merchant, ...updatedMerchant };
+          if (state.overview?.merchant) {
+            state.overview.merchant = { ...state.overview.merchant, ...updatedMerchant };
+          }
+        }
+        state.profileDraft = null;
+        showNotice('Store profile and warehouse pickup details updated successfully.');
+      } catch (err) {
+        state.formError = requestErrorMessage(err, 'Failed to update store profile.');
+      } finally {
+        state.busy = null;
+        render();
+      }
+      return;
     }
-    return;
+
+    // Branch B: Not Registered Merchant -> POST /registration
+    if (isNotRegistered) {
+      if (!state.overview?.viewer?.canSubmitRegistration) {
+        state.formError = 'Only the store owner can upload corporate documents and submit merchant registration.';
+        render();
+        return;
+      }
+
+      if (!dispatchContactName || !dispatchContactPhone) {
+        state.formError = 'Please provide the designated dispatch contact name and phone number for courier pickups.';
+        render();
+        return;
+      }
+
+      const cacNumber = form.elements.cacNumber?.value.trim();
+      const tinNumber = form.elements.tinNumber?.value.trim() || null;
+      const directorNin = form.elements.directorNin?.value.trim();
+      const idType = form.elements.idType?.value || 'national_id';
+
+      if (!cacNumber) {
+        state.formError = 'Please provide your Corporate Affairs Commission (CAC) Registration Number (RC/BN).';
+        render();
+        return;
+      }
+
+      if (!directorNin || !/^\d{11}$/.test(directorNin)) {
+        state.formError = 'Director NIN must contain exactly 11 digits.';
+        render();
+        return;
+      }
+
+      if (!state.selectedIdDocFile || !state.selectedUtilityBillFile) {
+        state.formError = 'Please select and attach both your Government Identity Document and Proof of Address.';
+        render();
+        return;
+      }
+
+      state.busy = 'submit-registration';
+      state.formError = '';
+      render();
+
+      let idDocPath = null;
+      let utilityBillPath = null;
+
+      try {
+        // Step 1: Request signed upload URL for Identity Document and upload to private bucket
+        const idUploadRes = await api(`/v1/vendor/merchant/${state.merchant.id}/registration/upload-url`, {
+          method: 'POST',
+          idempotencyScope: 'vendor-registration-upload-id',
+          body: {
+            kind: 'identity_document',
+            contentType: state.selectedIdDocFile.type,
+            sizeBytes: state.selectedIdDocFile.size,
+          },
+        });
+
+        if (!idUploadRes?.path || !idUploadRes?.token) {
+          throw new Error('Could not obtain identity document upload URL.');
+        }
+
+        const { error: idUploadErr } = await state.client.storage
+          .from('merchant-kyc')
+          .uploadToSignedUrl(idUploadRes.path, idUploadRes.token, state.selectedIdDocFile, {
+            contentType: state.selectedIdDocFile.type,
+          });
+
+        if (idUploadErr) {
+          throw new Error(`Failed to upload identity document: ${idUploadErr.message}`);
+        }
+        idDocPath = idUploadRes.path;
+
+        // Step 2: Request signed upload URL for Utility Bill and upload to private bucket
+        const utilUploadRes = await api(`/v1/vendor/merchant/${state.merchant.id}/registration/upload-url`, {
+          method: 'POST',
+          idempotencyScope: 'vendor-registration-upload-util',
+          body: {
+            kind: 'utility_bill',
+            contentType: state.selectedUtilityBillFile.type,
+            sizeBytes: state.selectedUtilityBillFile.size,
+          },
+        });
+
+        if (!utilUploadRes?.path || !utilUploadRes?.token) {
+          throw new Error('Could not obtain utility bill upload URL.');
+        }
+
+        const { error: utilUploadErr } = await state.client.storage
+          .from('merchant-kyc')
+          .uploadToSignedUrl(utilUploadRes.path, utilUploadRes.token, state.selectedUtilityBillFile, {
+            contentType: state.selectedUtilityBillFile.type,
+          });
+
+        if (utilUploadErr) {
+          throw new Error(`Failed to upload utility bill: ${utilUploadErr.message}`);
+        }
+        utilityBillPath = utilUploadRes.path;
+
+        // Step 3: Atomically submit registration
+        const registrationPayload = {
+          businessName,
+          slug,
+          description,
+          logoUrl,
+          bannerUrl,
+          contactEmail,
+          contactPhone,
+          whatsappPhone,
+          address,
+          lga,
+          state: stateVal,
+          dispatchContactName,
+          dispatchContactPhone,
+          fulfillmentSla,
+          cacNumber,
+          tinNumber,
+          directorNin,
+          idType,
+          idDocumentPath: idDocPath,
+          utilityBillPath,
+        };
+
+        const registrationResult = await api(`/v1/vendor/merchant/${state.merchant.id}/registration`, {
+          method: 'POST',
+          idempotencyScope: 'vendor-registration-submit',
+          body: registrationPayload,
+        });
+
+        // Clear sensitive documents and credentials from memory and DOM immediately
+        const ninInput = document.getElementById('prof-nin');
+        if (ninInput) ninInput.value = '';
+        state.selectedIdDocFile = null;
+        state.selectedUtilityBillFile = null;
+        state.profileDraft = null;
+
+        if (registrationResult?.merchant) {
+          state.merchant = { ...state.merchant, ...registrationResult.merchant };
+          if (state.overview?.merchant) {
+            state.overview.merchant = { ...state.overview.merchant, ...registrationResult.merchant };
+          }
+        } else {
+          state.merchant.registrationState = 'in_review';
+          if (state.overview?.merchant) {
+            state.overview.merchant.registrationState = 'in_review';
+          }
+        }
+        if (registrationResult?.verification) {
+          state.verificationData = registrationResult.verification;
+        }
+
+        showNotice('Registration submitted for Operations review. Verification in progress.');
+      } catch (err) {
+        // Clear NIN immediately on error as well
+        const ninInput = document.getElementById('prof-nin');
+        if (ninInput) ninInput.value = '';
+        state.formError = requestErrorMessage(err, 'Registration submission failed. Please verify your documents and try again.');
+      } finally {
+        state.busy = null;
+        render();
+      }
+      return;
+    }
   }
 });
 
