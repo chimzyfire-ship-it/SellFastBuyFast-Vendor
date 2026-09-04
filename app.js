@@ -145,6 +145,20 @@ function safeUrl(value) {
   }
 }
 
+function isMediaUrlValid(value) {
+  if (!value || typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (trimmed.startsWith('assets/') || trimmed.startsWith('/') || trimmed.startsWith('./')) return true;
+  return Boolean(safeUrl(trimmed));
+}
+
+function safeMediaUrl(value) {
+  if (!value || typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (trimmed.startsWith('assets/') || trimmed.startsWith('/') || trimmed.startsWith('./')) return trimmed;
+  return safeUrl(trimmed);
+}
+
 function formatDate(value) {
   if (!value) return '—';
   const date = new Date(value);
@@ -1028,7 +1042,8 @@ function renderCatalogueView() {
 
   const rows = filtered.map((product) => {
     const variant = product.variants?.[0];
-    const image = safeUrl(product.media?.find((m) => m.mediaType === 'image')?.mediaUrl);
+    const rawImage = product.media?.find((m) => m.mediaType === 'image')?.mediaUrl;
+    const image = safeMediaUrl(rawImage);
     const qty = variant?.availableQuantity ?? 0;
     const reserved = variant?.reservedQuantity ?? 0;
     const catId = product.categoryId || 'uncategorized';
@@ -1305,7 +1320,7 @@ function renderAddProductView() {
   const previewMode = state.previewMode || 'card'; // 'card' | 'detail'
 
   // Live preview computations
-  const previewImg = safeUrl(imageUrl) || 'assets/product-sneakers-arch.jpg';
+  const previewImg = safeMediaUrl(imageUrl) || 'assets/product-sneakers-arch.jpg';
   const previewTitle = title || 'Italian Leather Men\'s Oxford Shoes';
   const previewBrand = brand || 'SellFast Signature';
   const selectedCat = state.categories.find((c) => c.id === categoryId)?.name || 'Footwear & Fashion';
@@ -1331,7 +1346,7 @@ function renderAddProductView() {
   // Quality score & readiness checklist
   const checkTitle = title.trim().length >= 10;
   const checkCategory = Boolean(categoryId);
-  const checkImage = Boolean(safeUrl(imageUrl) || imageUrl.startsWith('assets/'));
+  const checkImage = isMediaUrlValid(imageUrl);
   const checkPrice = previewPriceNum > 0;
   const checkStock = qtyNum > 0;
   const checkDesc = description.trim().length >= 20 || (bullet1 && bullet2);
@@ -1704,7 +1719,12 @@ function renderAddProductView() {
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px;gap:12px;flex-wrap:wrap;">
-              <button class="btn btn-secondary" type="button" data-action="navigate" data-view="catalogue">Cancel</button>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-secondary" type="button" data-action="navigate" data-view="catalogue">Cancel</button>
+                <button class="btn btn-secondary" type="button" data-action="discard-product-draft" title="Reset all changes and return to catalogue">
+                  ${icon('rotate-ccw')} Discard Draft
+                </button>
+              </div>
               <div style="display:flex;gap:10px;">
                 <button class="btn btn-secondary" type="button" data-action="save-as-draft" ${state.busy === 'create-product' || !canCreate ? 'disabled' : ''}>
                   ${icon('file-text')} Save as Draft
@@ -2263,11 +2283,20 @@ function renderProfileView() {
   const ver = state.overview?.verification || {};
   const isOwner = state.overview?.viewer?.isOwner ?? true;
 
-  const isVerified = (m.status === 'active' || ver.status === 'approved' || m.kycStatus === 'verified');
+  // Determine merchant registration lifecycle state: 'registered' vs 'not_registered'
+  const defaultState = (m.status === 'active' || ver.status === 'approved' || m.kycStatus === 'verified') ? 'registered' : 'not_registered';
+  const regState = state.profileRegistrationState || m.registrationState || defaultState;
+  const isRegistered = regState === 'registered';
+
   const isVacation = Boolean(m.vacationMode || m.status === 'vacation' || m.status === 'suspended');
   const storeSlug = m.slug || 'chimzy-stores';
   const publicStoreUrl = `https://sellfastbuyfast.com/store/${storeSlug}`;
   const currentState = m.state || 'Lagos State';
+
+  // Stepper calculations for onboarding/unregistered view
+  const hasIdentity = Boolean(m.businessName && storeSlug);
+  const hasWarehouse = Boolean(m.address && m.lga);
+  const hasCompliance = Boolean(m.cacNumber && m.directorNin);
 
   return `
     <div class="page-header">
@@ -2276,14 +2305,77 @@ function renderProfileView() {
         <p class="page-subtitle">Manage customer-facing storefront identity, 3PL courier pickup address, and compliance credentials.</p>
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
-        <span class="compliance-badge ${isVerified ? 'verified' : 'pending'}">
-          ${icon(isVerified ? 'shield-check' : 'clock')} ${isVerified ? 'Verified Enterprise' : 'Verification Pending'}
+        <span class="compliance-badge ${isRegistered ? 'verified' : 'pending'}">
+          ${icon(isRegistered ? 'shield-check' : 'clock')} ${isRegistered ? 'Verified Enterprise' : 'Verification In-Progress'}
         </span>
         <span class="status-pill ${isVacation ? 'status-pill-neutral' : 'status-pill-success'}">
           ${isVacation ? 'Vacation Mode' : 'Store Active'}
         </span>
       </div>
     </div>
+
+    <!-- Registration State Simulator & View Control -->
+    <div class="profile-mode-switcher">
+      <span style="font-size:12px;font-weight:700;color:var(--ink-secondary);display:flex;align-items:center;gap:6px;">
+        ${icon('shield')} Registration State Mode:
+      </span>
+      <div class="profile-segment-control">
+        <button type="button" class="profile-segment-btn ${isRegistered ? 'active' : ''}" data-action="set-profile-reg-state" data-state="registered" title="View profile as an already registered & verified enterprise merchant">
+          ${icon('shield-check')} Already Registered & Verified
+        </button>
+        <button type="button" class="profile-segment-btn ${!isRegistered ? 'active' : ''}" data-action="set-profile-reg-state" data-state="not_registered" title="View profile as a newly onboarded / in-progress merchant">
+          ${icon('alert-circle')} Not Yet Registered (In-Progress)
+        </button>
+      </div>
+      <span style="font-size:11.5px;color:var(--ink-muted);margin-left:auto;">
+        ${isRegistered ? 'Enterprise Tier-2 Active: Courier pickup & live customer checkout enabled' : 'Onboarding Milestone: Complete CAC & warehouse pickup to activate store'}
+      </span>
+    </div>
+
+    ${!isRegistered ? `
+      <!-- Onboarding Stepper for Unregistered / In-Progress Merchants -->
+      <div class="registration-stepper-card">
+        <div class="stepper-header">
+          <div>
+            <div class="stepper-title">${icon('shield-alert')} Merchant Onboarding & Verification Progress</div>
+            <p class="stepper-subtitle">Complete these 3 essential setup milestones to unlock automated 3PL courier pickup, online checkout, and seller escrow payouts.</p>
+          </div>
+          <span class="stepper-progress-badge">${hasCompliance && hasWarehouse ? 'Step 3 of 3 (Ready for Review)' : (hasWarehouse ? 'Step 2 of 3 (Warehouse Complete)' : 'Step 1 of 3 (Identity Only)')}</span>
+        </div>
+        <div class="stepper-steps-track">
+          <div class="stepper-step completed">
+            <div class="stepper-step-circle">${icon('check')}</div>
+            <div class="stepper-step-content">
+              <span class="stepper-step-name">1. Store Identity & Slug</span>
+              <span class="stepper-step-status">Configured (${escapeHtml(storeSlug)})</span>
+            </div>
+          </div>
+          <div class="stepper-connector ${hasWarehouse ? 'active' : ''}"></div>
+          <div class="stepper-step ${hasWarehouse ? 'completed' : 'current'}">
+            <div class="stepper-step-circle">${hasWarehouse ? icon('check') : '2'}</div>
+            <div class="stepper-step-content">
+              <span class="stepper-step-name">2. Warehouse Courier Pickup</span>
+              <span class="stepper-step-status">${hasWarehouse ? 'Recorded' : 'Action Required'}</span>
+            </div>
+          </div>
+          <div class="stepper-connector ${hasCompliance ? 'active' : ''}"></div>
+          <div class="stepper-step ${hasCompliance ? 'completed' : (hasWarehouse ? 'current' : 'pending')}">
+            <div class="stepper-step-circle">${hasCompliance ? icon('check') : '3'}</div>
+            <div class="stepper-step-content">
+              <span class="stepper-step-name">3. CAC RC/BN & Director NIN</span>
+              <span class="stepper-step-status">${hasCompliance ? 'Ready for Audit' : 'Action Required'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="unregistered-callout-banner">
+        <div class="unregistered-callout-icon">${icon('alert-triangle')}</div>
+        <div class="unregistered-callout-text">
+          <strong>Store Verification Required Before First Sale:</strong> Under Nigerian CBN anti-fraud regulations and SellFast Escrow Terms, vendors must provide a physical pickup warehouse address and verified CAC business credentials. You may save your progress as a draft anytime, or submit when all 3 sections are filled.
+        </div>
+      </div>
+    ` : ''}
 
     <div class="store-profile-view">
       <!-- Storefront Hero Card -->
@@ -2302,8 +2394,8 @@ function renderProfileView() {
           <div class="store-hero-info">
             <div class="store-hero-title-row">
               <h2 class="store-profile-title">${escapeHtml(m.businessName || 'SellFast Merchant Store')}</h2>
-              <span class="compliance-badge ${isVerified ? 'verified' : 'pending'}">
-                ${icon(isVerified ? 'shield-check' : 'clock')} ${isVerified ? 'CAC Audited & Verified' : 'Compliance In Review'}
+              <span class="compliance-badge ${isRegistered ? 'verified' : 'pending'}">
+                ${icon(isRegistered ? 'shield-check' : 'clock')} ${isRegistered ? 'CAC Audited & Verified' : 'Compliance In Review'}
               </span>
             </div>
             <p class="store-hero-tagline">${escapeHtml(m.description || 'Authorized vendor distributing authentic electronics, apparel, and lifestyle essentials with 7-day buyer protection.')}</p>
@@ -2342,13 +2434,13 @@ function renderProfileView() {
               </div>
               <div class="card-body">
                 <div class="form-group">
-                  <label class="form-label" for="prof-biz-name">Business / Store Name</label>
+                  <label class="form-label" for="prof-biz-name">Business / Store Name <span style="color:var(--rose-600);">*</span></label>
                   <input class="input" id="prof-biz-name" name="businessName" value="${escapeAttribute(m.businessName || '')}" required />
                   <span class="field-help">Your customer-facing trade or brand name.</span>
                 </div>
 
                 <div class="form-group">
-                  <label class="form-label" for="prof-slug">Storefront Handle / Custom Slug</label>
+                  <label class="form-label" for="prof-slug">Storefront Handle / Custom Slug <span style="color:var(--rose-600);">*</span></label>
                   <div class="input-prefix-wrap">
                     <span class="input-prefix">sellfastbuyfast.com/store/</span>
                     <input class="input input-with-prefix" id="prof-slug" name="slug" value="${escapeAttribute(storeSlug)}" required />
@@ -2394,17 +2486,17 @@ function renderProfileView() {
                 </div>
 
                 <div class="form-group" style="margin-top:16px;">
-                  <label class="form-label" for="prof-address">Street Address / Facility Unit</label>
+                  <label class="form-label" for="prof-address">Street Address / Facility Unit <span style="color:var(--rose-600);">*</span></label>
                   <input class="input" id="prof-address" name="address" value="${escapeAttribute(m.address || '')}" placeholder="e.g. Suite 4B, 14 Admiralty Way, Lekki Phase 1" required />
                 </div>
 
                 <div class="grid-2col">
                   <div class="form-group">
-                    <label class="form-label" for="prof-lga">Local Government Area (LGA)</label>
+                    <label class="form-label" for="prof-lga">Local Government Area (LGA) <span style="color:var(--rose-600);">*</span></label>
                     <input class="input" id="prof-lga" name="lga" value="${escapeAttribute(m.lga || '')}" placeholder="e.g. Eti-Osa / Ikeja / Abuja Municipal" required />
                   </div>
                   <div class="form-group">
-                    <label class="form-label" for="prof-state">State</label>
+                    <label class="form-label" for="prof-state">State <span style="color:var(--rose-600);">*</span></label>
                     <select class="select" id="prof-state" name="state" required>
                       ${NIGERIAN_STATES.map((st) => `<option value="${escapeAttribute(st)}" ${st === currentState ? 'selected' : ''}>${escapeHtml(st)}</option>`).join('')}
                     </select>
@@ -2479,13 +2571,13 @@ function renderProfileView() {
               </div>
               <div class="card-body">
                 <div class="form-group">
-                  <label class="form-label" for="prof-email">Dedicated Support Email</label>
+                  <label class="form-label" for="prof-email">Dedicated Support Email <span style="color:var(--rose-600);">*</span></label>
                   <input class="input" id="prof-email" name="contactEmail" type="email" value="${escapeAttribute(m.contactEmail || '')}" required />
                   <span class="field-help">Buyer transaction receipts list this support email.</span>
                 </div>
 
                 <div class="form-group">
-                  <label class="form-label" for="prof-phone">Customer Support Hotline</label>
+                  <label class="form-label" for="prof-phone">Customer Support Hotline <span style="color:var(--rose-600);">*</span></label>
                   <input class="input" id="prof-phone" name="contactPhone" type="tel" value="${escapeAttribute(m.contactPhone || '')}" required />
                 </div>
 
@@ -2509,42 +2601,83 @@ function renderProfileView() {
                   <div class="profile-section-icon">${icon('shield-check')}</div>
                   <div>
                     <h2 class="card-title">Legal Entity & KYC Compliance</h2>
-                    <p class="card-subtitle">Audited credentials for marketplace escrow trust & payouts.</p>
+                    <p class="card-subtitle">${isRegistered ? 'Verified credentials for marketplace trust & payouts.' : 'Submit CAC & Director identity to complete registration.'}</p>
                   </div>
                 </div>
-                <span class="compliance-badge ${isVerified ? 'verified' : 'pending'}">
-                  ${icon(isVerified ? 'check' : 'clock')} ${isVerified ? 'Approved' : 'Pending'}
+                <span class="compliance-badge ${isRegistered ? 'verified' : 'pending'}">
+                  ${icon(isRegistered ? 'check' : 'clock')} ${isRegistered ? 'Approved' : 'Action Required'}
                 </span>
               </div>
               <div class="card-body">
-                <div class="compliance-verified-banner ${isVerified ? 'verified' : 'pending'}">
-                  <div class="compliance-shield-icon">${icon(isVerified ? 'shield-check' : 'alert-circle')}</div>
-                  <div>
-                    <div style="font-weight:700;font-size:13.5px;color:var(--forest-950);">
-                      ${isVerified ? 'Corporate Compliance Verified' : 'Compliance Documents Under Review'}
-                    </div>
-                    <div style="font-size:12px;color:var(--ink-secondary);margin-top:2px;line-height:1.4;">
-                      ${isVerified 
-                        ? 'Corporate registration and director identity verified by SellFast Risk & Compliance. Tier 2 merchant status active.' 
-                        : 'Corporate documents are being audited by SellFast Operations.'}
+                ${isRegistered ? `
+                  <div class="compliance-verified-banner verified">
+                    <div class="compliance-shield-icon">${icon('shield-check')}</div>
+                    <div>
+                      <div style="font-weight:700;font-size:13.5px;color:var(--forest-950);">
+                        Corporate Compliance Verified (Tier 2 Merchant)
+                      </div>
+                      <div style="font-size:12px;color:var(--ink-secondary);margin-top:2px;line-height:1.4;">
+                        CAC RC/BN filings and Director identity verified by SellFast Risk & Legal. Verification Ref: <strong style="font-family:var(--font-numbers);">SFBF-CAC-2026-9281</strong>.
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div class="form-group" style="margin-top:16px;">
-                  <label class="form-label" for="prof-cac">CAC Registration Number (RC / BN)</label>
-                  <input class="input" id="prof-cac" name="cacNumber" value="${escapeAttribute(m.cacNumber || ver.cacNumber || 'RC-1892041')}" placeholder="e.g. RC-1849202" />
-                </div>
+                  <div class="form-group" style="margin-top:16px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                      <label class="form-label" for="prof-cac" style="margin:0;">CAC Registration Number (RC / BN)</label>
+                      <span class="field-locked-pill">${icon('check')} Verified & Locked</span>
+                    </div>
+                    <input class="input" id="prof-cac" name="cacNumber" value="${escapeAttribute(m.cacNumber || 'RC-1892041')}" readonly style="background:var(--page-subtle);font-family:var(--font-numbers);font-weight:700;" />
+                  </div>
 
-                <div class="form-group">
-                  <label class="form-label" for="prof-tin">Tax Identification Number (TIN)</label>
-                  <input class="input" id="prof-tin" name="tinNumber" value="${escapeAttribute(m.tinNumber || ver.tinNumber || '24891024-0001')}" placeholder="e.g. 24819024-0001" />
-                </div>
+                  <div class="form-group">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                      <label class="form-label" for="prof-tin" style="margin:0;">Tax Identification Number (TIN)</label>
+                      <span class="field-locked-pill">${icon('check')} Verified</span>
+                    </div>
+                    <input class="input" id="prof-tin" name="tinNumber" value="${escapeAttribute(m.tinNumber || '24891024-0001')}" readonly style="background:var(--page-subtle);font-family:var(--font-numbers);font-weight:700;" />
+                  </div>
 
-                <div class="form-group">
-                  <label class="form-label" for="prof-nin">Director NIN / Identification Ref</label>
-                  <input class="input" id="prof-nin" name="directorNin" value="${escapeAttribute(m.directorNin || '83920194821')}" placeholder="National Identity Number" />
-                </div>
+                  <div class="form-group">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                      <label class="form-label" for="prof-nin" style="margin:0;">Director National Identity (NIN)</label>
+                      <span class="field-locked-pill">${icon('check')} Verified & Masked</span>
+                    </div>
+                    <input class="input" id="prof-nin" name="directorNin" value="${escapeAttribute(m.directorNin ? m.directorNin.slice(0, 4) + ' •••• ' + m.directorNin.slice(-4) : '8392 •••• 4821')}" readonly style="background:var(--page-subtle);font-family:var(--font-numbers);font-weight:700;" />
+                  </div>
+
+                  <div style="font-size:11.5px;color:var(--ink-muted);line-height:1.4;margin-top:10px;">
+                    ${icon('lock')} Legal entity records are locked for escrow protection. To update corporate filings, submit a ticket to <a href="mailto:compliance@sellfastbuyfast.com" style="color:var(--forest-700);font-weight:700;">compliance@sellfastbuyfast.com</a>.
+                  </div>
+                ` : `
+                  <div class="compliance-verified-banner pending">
+                    <div class="compliance-shield-icon" style="color:#b45309;">${icon('clock')}</div>
+                    <div>
+                      <div style="font-weight:700;font-size:13.5px;color:var(--forest-950);">
+                        Business Registration Required
+                      </div>
+                      <div style="font-size:12px;color:var(--ink-secondary);margin-top:2px;line-height:1.4;">
+                        Enter your CAC corporate number, TIN, and Director NIN to initiate verification and unlock store operations.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="form-group" style="margin-top:16px;">
+                    <label class="form-label" for="prof-cac">CAC Registration Number (RC / BN) <span style="color:var(--rose-600);">*</span></label>
+                    <input class="input" id="prof-cac" name="cacNumber" value="${escapeAttribute(m.cacNumber || '')}" placeholder="e.g. RC-1849202 or BN-3948201" required />
+                    <span class="field-help">Incorporated Companies (RC) or Registered Business Names (BN).</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label class="form-label" for="prof-tin">Tax Identification Number (TIN) <span class="table-sub-text">(optional)</span></label>
+                    <input class="input" id="prof-tin" name="tinNumber" value="${escapeAttribute(m.tinNumber || '')}" placeholder="e.g. 24819024-0001" />
+                  </div>
+
+                  <div class="form-group">
+                    <label class="form-label" for="prof-nin">Director NIN (11 Digits) <span style="color:var(--rose-600);">*</span></label>
+                    <input class="input" id="prof-nin" name="directorNin" maxlength="11" value="${escapeAttribute(m.directorNin || '')}" placeholder="11-digit National Identity Number" required />
+                  </div>
+                `}
               </div>
             </div>
 
@@ -2583,15 +2716,25 @@ function renderProfileView() {
           </div>
         </div>
 
-        <!-- Sticky Save Bar at Bottom -->
+        <!-- Sticky Save Bar at Bottom with Discard, Draft, and Submit Actions -->
         <div class="profile-save-bar">
           <div class="profile-save-bar-info">
-            ${icon('info')} <span>Ensure warehouse address and WhatsApp line are accurate for smooth courier pickup and buyer communication.</span>
+            ${icon('info')}
+            <span>${isRegistered 
+              ? 'Warehouse pickup address and customer WhatsApp are synchronized with GIG / Fez couriers.' 
+              : 'Submit your CAC and warehouse address to complete merchant onboarding.'}</span>
           </div>
-          <div style="display:flex;gap:10px;">
-            <button type="reset" class="btn btn-secondary">Discard</button>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary" data-action="discard-profile-changes" title="Discard unsaved edits and reload saved profile">
+              ${icon('rotate-ccw')} Discard Changes
+            </button>
+            <button type="button" class="btn btn-secondary" data-action="save-profile-draft" ${state.busy === 'update-profile' ? 'disabled' : ''} title="Save current progress as draft without publishing">
+              ${icon('file-text')} Save as Draft
+            </button>
             <button type="submit" class="btn btn-primary" ${state.busy === 'update-profile' ? 'disabled' : ''}>
-              ${state.busy === 'update-profile' ? 'Saving Store Profile…' : `${icon('save')} Save Store Profile`}
+              ${state.busy === 'update-profile' 
+                ? 'Saving…' 
+                : (isRegistered ? `${icon('save')} Save Store Profile` : `${icon('send')} Submit Registration for Review`)}
             </button>
           </div>
         </div>
@@ -3657,11 +3800,135 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
+  if (action === 'set-profile-reg-state') {
+    const nextState = button.dataset.state || 'registered';
+    state.profileRegistrationState = nextState;
+    if (state.merchant) {
+      state.merchant.registrationState = nextState;
+      saveProfileCache({ registrationState: nextState });
+    }
+    render();
+    showNotice(nextState === 'registered'
+      ? 'Switched view to Registered & Verified Enterprise Merchant.'
+      : 'Switched view to In-Progress / Unregistered Onboarding mode.');
+    return;
+  }
+
+  if (action === 'discard-profile-changes') {
+    const saved = getProfileCache();
+    if (saved && state.merchant) {
+      state.merchant = { ...state.merchant, ...saved };
+    }
+    state.formError = '';
+    render();
+    showNotice('Discarded unsaved edits. Restored saved profile.');
+    return;
+  }
+
+  if (action === 'save-profile-draft') {
+    const form = document.getElementById('business-profile-form');
+    if (form) {
+      const draftProfile = {
+        businessName: form.elements.businessName?.value.trim() || '',
+        slug: (form.elements.slug?.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-') || 'store'),
+        description: form.elements.description?.value.trim() || '',
+        logoUrl: form.elements.logoUrl?.value.trim() || '',
+        bannerUrl: form.elements.bannerUrl?.value.trim() || '',
+        contactEmail: form.elements.contactEmail?.value.trim() || '',
+        contactPhone: form.elements.contactPhone?.value.trim() || '',
+        whatsappPhone: form.elements.whatsappPhone?.value.trim() || '',
+        address: form.elements.address?.value.trim() || '',
+        lga: form.elements.lga?.value.trim() || '',
+        state: form.elements.state?.value || 'Lagos State',
+        dispatchContactName: form.elements.dispatchContactName?.value.trim() || '',
+        dispatchContactPhone: form.elements.dispatchContactPhone?.value.trim() || '',
+        fulfillmentSla: form.elements.fulfillmentSla?.value || 'same_day',
+        vacationMode: Boolean(form.elements.vacationMode?.checked),
+        cacNumber: form.elements.cacNumber?.value.trim() || '',
+        tinNumber: form.elements.tinNumber?.value.trim() || '',
+        directorNin: form.elements.directorNin?.value.trim() || '',
+        isDraft: true,
+      };
+      saveProfileCache(draftProfile);
+      if (state.merchant) state.merchant = { ...state.merchant, ...draftProfile };
+      state.formError = '';
+      showNotice('Store profile progress saved as draft.');
+    }
+    return;
+  }
+
+  if (action === 'discard-product-draft') {
+    state.editingProductId = null;
+    state.productDraft = null;
+    state.formError = '';
+    state.activeView = 'catalogue';
+    render();
+    showNotice('Product draft discarded. Restored catalogue.');
+    return;
+  }
+
   if (action === 'save-as-draft') {
-    const reviewCheck = document.getElementById('prod-submit-review');
-    if (reviewCheck) reviewCheck.checked = false;
     const form = document.getElementById('product-form');
-    if (form) form.requestSubmit();
+    if (!form) return;
+    const title = form.elements.title?.value.trim() || (state.productDraft?.title || 'Draft Product');
+    const categoryId = form.elements.categoryId?.value || (state.categories[0]?.id || 'cat-apparel');
+    const brand = form.elements.brand?.value.trim() || 'SellFast Signature';
+    const condition = form.elements.condition?.value || 'brand_new';
+    const tags = form.elements.tags?.value.trim() || '';
+    const sku = form.elements.sku?.value.trim() || `SFBF-DRAFT-${Math.floor(1000 + Math.random() * 9000)}`;
+    const priceNaira = Number(form.elements.priceNaira?.value) || 0;
+    const comparePriceNaira = Number(form.elements.comparePriceNaira?.value) || 0;
+    const availableQuantity = Number(form.elements.availableQuantity?.value) || 0;
+    const description = form.elements.description?.value.trim() || 'Product specifications pending completion.';
+    const imageUrl = form.elements.imageUrl?.value.trim() || 'assets/product-sneakers-arch.jpg';
+    const weightKg = form.elements.weightKg?.value.trim() || '0.85';
+    const dimensionsCm = form.elements.dimensionsCm?.value.trim() || '33 × 21 × 12';
+    const returnPolicy = form.elements.returnPolicy?.value || '7_day_escrow';
+    const warranty = form.elements.warranty?.value || '30_days';
+
+    const draftProd = {
+      id: state.editingProductId || `draft-prod-${Date.now()}`,
+      title,
+      categoryId,
+      brand,
+      condition,
+      sku,
+      status: 'draft',
+      priceMinor: Math.round(priceNaira * 100),
+      comparePriceMinor: comparePriceNaira > 0 ? Math.round(comparePriceNaira * 100) : null,
+      availableQuantity,
+      description,
+      imageUrl,
+      weightKg: Number(weightKg) || 0.85,
+      dimensionsCm,
+      returnPolicy,
+      warranty,
+      media: [{ mediaType: 'image', mediaUrl: imageUrl }],
+      variants: [{
+        sku,
+        title: 'Default',
+        priceMinor: Math.round(priceNaira * 100),
+        availableQuantity,
+      }],
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (state.editingProductId) {
+      const idx = state.products.findIndex((p) => p.id === state.editingProductId);
+      if (idx !== -1) {
+        state.products[idx] = { ...state.products[idx], ...draftProd };
+      }
+    } else {
+      state.products.unshift(draftProd);
+    }
+
+    state.editingProductId = null;
+    state.productDraft = null;
+    state.formError = '';
+    state.activeView = 'catalogue';
+    state.catalogueFilter = 'draft';
+    render();
+    showNotice('Product specifications saved as draft. Found under Drafts in Catalogue.');
     return;
   }
 
@@ -4440,7 +4707,7 @@ document.addEventListener('submit', async (event) => {
 
     if (!title || !brand || !categoryId || !Number.isFinite(weightKgNumber) || weightKgNumber <= 0 ||
       !Number.isFinite(priceNaira) || !Number.isSafeInteger(priceMinor) || priceNaira <= 0 ||
-      !description || !safeUrl(imageUrl) || variants.length === 0 || variants.some((variant) =>
+      !description || !isMediaUrlValid(imageUrl) || variants.length === 0 || variants.some((variant) =>
         !variant.sku || !Number.isSafeInteger(variant.priceMinor) || variant.priceMinor <= 0 ||
         !Number.isSafeInteger(variant.availableQuantity) || variant.availableQuantity < 0
       )) {
@@ -4648,6 +4915,17 @@ document.addEventListener('submit', async (event) => {
       status: vacationMode ? 'suspended' : 'active',
     };
 
+    const isUnregistered = (state.profileRegistrationState === 'not_registered') || (state.merchant?.registrationState === 'not_registered');
+    if (isUnregistered) {
+      if (!cacNumber || !directorNin) {
+        state.formError = 'Please provide your CAC Registration Number and Director NIN to complete merchant registration.';
+        render();
+        return;
+      }
+      updatedProfile.registrationState = 'registered';
+      state.profileRegistrationState = 'registered';
+    }
+
     if (state.merchant) {
       state.merchant = { ...state.merchant, ...updatedProfile };
     }
@@ -4657,7 +4935,9 @@ document.addEventListener('submit', async (event) => {
     saveProfileCache(updatedProfile);
     state.formError = '';
     render();
-    showNotice('Store profile and warehouse pickup details updated successfully.');
+    showNotice(isUnregistered
+      ? 'Registration submitted for KYC & CAC verification! Store profile is now fully registered.'
+      : 'Store profile and warehouse pickup details updated successfully.');
 
     try {
       if (state.merchant?.id) {

@@ -3691,4 +3691,212 @@ svg.lucide {
   }
 }
 
+/* Registration Mode Switcher Pills */
+.profile-mode-switcher {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 8px 14px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
+}
+
+.profile-segment-control {
+  display: inline-flex;
+  background: var(--page-subtle);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 4px;
+  border: 1px solid var(--border-light);
+}
+
+.profile-segment-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.profile-segment-btn:hover {
+  color: var(--ink-primary);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.profile-segment-btn.active {
+  background: #ffffff;
+  color: var(--forest-950);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Onboarding Stepper for Unregistered Merchants */
+.registration-stepper-card {
+  background: var(--surface);
+  border: 1px solid var(--border-medium);
+  border-left: 4px solid var(--gold-500);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 20px;
+}
+
+.stepper-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stepper-title {
+  font-size: 14.5px;
+  font-weight: 800;
+  color: var(--forest-950);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepper-subtitle {
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  margin: 3px 0 0 0;
+  line-height: 1.4;
+}
+
+.stepper-progress-badge {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.stepper-steps-track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .stepper-steps-track {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.stepper-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.stepper-step-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+  border: 2px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink-muted);
+}
+
+.stepper-step.completed .stepper-step-circle {
+  background: var(--forest-700);
+  border-color: var(--forest-700);
+  color: #ffffff;
+}
+
+.stepper-step.current .stepper-step-circle {
+  background: var(--gold-500);
+  border-color: var(--gold-500);
+  color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+
+.stepper-step-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.stepper-step-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.stepper-step-status {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.stepper-connector {
+  flex: 0 0 24px;
+  height: 2px;
+  background: var(--border-medium);
+}
+
+.stepper-connector.active {
+  background: var(--forest-700);
+}
+
+/* Unregistered Notice Banner */
+.unregistered-callout-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+
+.unregistered-callout-icon {
+  color: #b45309;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.unregistered-callout-text {
+  font-size: 13px;
+  color: #78350f;
+  line-height: 1.45;
+}
+
+/* Field Locked Pill */
+.field-locked-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #065f46;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+
 
