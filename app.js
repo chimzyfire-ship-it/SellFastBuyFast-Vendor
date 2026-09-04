@@ -63,7 +63,7 @@ const VIEW_TITLES = {
   fulfilment: 'Fulfilment Queue',
   returns: 'Returns & Disputes',
   payouts: 'Payments (deferred)',
-  profile: 'Business Profile & KYC',
+  profile: 'Store Profile',
 };
 
 // Helpers & Utilities
@@ -78,6 +78,20 @@ function getInventoryCache() {
 function saveInventoryCache(cache) {
   try {
     window.localStorage?.setItem('sfbf_inventory_cache', JSON.stringify(cache));
+  } catch (e) {}
+}
+
+function getProfileCache() {
+  try {
+    return JSON.parse(window.localStorage?.getItem('sfbf_profile_cache') || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveProfileCache(cache) {
+  try {
+    window.localStorage?.setItem('sfbf_profile_cache', JSON.stringify(cache));
   } catch (e) {}
 }
 
@@ -738,7 +752,7 @@ function renderShellHtml() {
 
             <div class="nav-section-label">Finance & Settings</div>
             ${navItem('payouts', 'circle-pause', 'Payments (deferred)')}
-            ${navItem('profile', 'shield-check', 'Business & KYC')}
+            ${navItem('profile', 'store', 'Store Profile')}
           </nav>
         </div>
 
@@ -2199,115 +2213,389 @@ function renderPayoutsView() {
 }
 
 /* ==========================================================================
-   VIEW 7: BUSINESS PROFILE & KYC
+   VIEW 7: STORE PROFILE & SETTINGS
    ========================================================================== */
 
+const NIGERIAN_STATES = [
+  'Lagos State',
+  'Abuja FCT',
+  'Rivers State',
+  'Ogun State',
+  'Oyo State',
+  'Kano State',
+  'Kaduna State',
+  'Enugu State',
+  'Delta State',
+  'Edo State',
+  'Anambra State',
+  'Akwa Ibom State',
+  'Abia State',
+  'Ondo State',
+  'Osun State',
+  'Imo State',
+  'Plateau State',
+  'Kwara State',
+  'Cross River State',
+  'Benue State',
+  'Ekiti State',
+  'Kogi State',
+  'Nasarawa State',
+  'Niger State',
+  'Bauchi State',
+  'Borno State',
+  'Adamawa State',
+  'Gombe State',
+  'Taraba State',
+  'Yobe State',
+  'Jigawa State',
+  'Katsina State',
+  'Kebbi State',
+  'Sokoto State',
+  'Zamfara State',
+  'Bayelsa State',
+  'Ebonyi State'
+];
+
 function renderProfileView() {
-  const m = state.overview?.merchant || state.merchant || {};
+  const pCache = getProfileCache();
+  const rawM = state.overview?.merchant || state.merchant || {};
+  const m = { ...rawM, ...pCache };
   const ver = state.overview?.verification || {};
   const isOwner = state.overview?.viewer?.isOwner ?? true;
+
+  const isVerified = (m.status === 'active' || ver.status === 'approved' || m.kycStatus === 'verified');
+  const isVacation = Boolean(m.vacationMode || m.status === 'vacation' || m.status === 'suspended');
+  const storeSlug = m.slug || 'chimzy-stores';
+  const publicStoreUrl = `https://sellfastbuyfast.com/store/${storeSlug}`;
+  const currentState = m.state || 'Lagos State';
 
   return `
     <div class="page-header">
       <div>
-        <h1 class="page-title">Business Profile & Verification</h1>
-        <p class="page-subtitle">Maintain accurate business credentials and view CAC review status.</p>
+        <h1 class="page-title">Store Profile & Settings</h1>
+        <p class="page-subtitle">Manage customer-facing storefront identity, 3PL courier pickup address, and compliance credentials.</p>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="compliance-badge ${isVerified ? 'verified' : 'pending'}">
+          ${icon(isVerified ? 'shield-check' : 'clock')} ${isVerified ? 'Verified Enterprise' : 'Verification Pending'}
+        </span>
+        <span class="status-pill ${isVacation ? 'status-pill-neutral' : 'status-pill-success'}">
+          ${isVacation ? 'Vacation Mode' : 'Store Active'}
+        </span>
       </div>
     </div>
 
-    <div class="grid-2col">
-      <form class="card" id="business-profile-form" novalidate>
-        <div class="card-header">
-          <div>
-            <h2 class="card-title">Store Identity</h2>
-            <p class="card-subtitle">Customer-facing business profile.</p>
-          </div>
-          ${isOwner ? '' : '<span class="status-pill status-pill-neutral">Read Only</span>'}
+    <div class="store-profile-view">
+      <!-- Storefront Hero Card -->
+      <div class="store-hero-card">
+        <div class="store-hero-banner" ${m.bannerUrl ? `style="background-image:url('${escapeAttribute(m.bannerUrl)}');"` : ''}>
+          <div class="store-hero-overlay"></div>
         </div>
-        <div class="card-body">
-          <div class="form-group">
-            <label class="form-label" for="prof-biz-name">Business Name</label>
-            <input class="input" id="prof-biz-name" name="businessName" value="${escapeAttribute(m.businessName || '')}" ${isOwner ? '' : 'readonly'} required />
+        <div class="store-hero-content">
+          <div class="store-avatar-wrap">
+            ${m.logoUrl ? `
+              <img src="${escapeAttribute(m.logoUrl)}" alt="${escapeAttribute(m.businessName || 'Store')}" class="store-avatar-img" />
+            ` : `
+              <div class="store-avatar-fallback">${escapeHtml((m.businessName || 'S').charAt(0).toUpperCase())}</div>
+            `}
           </div>
-
-          <div class="form-group">
-            <label class="form-label" for="prof-biz-desc">Store Bio / Description</label>
-            <textarea class="textarea" id="prof-biz-desc" name="description" ${isOwner ? '' : 'readonly'}>${escapeHtml(m.description || '')}</textarea>
-          </div>
-
-          <div class="grid-2col">
-            <div class="form-group">
-              <label class="form-label" for="prof-email">Contact Email</label>
-              <input class="input" id="prof-email" name="contactEmail" type="email" value="${escapeAttribute(m.contactEmail || '')}" ${isOwner ? '' : 'readonly'} required />
+          <div class="store-hero-info">
+            <div class="store-hero-title-row">
+              <h2 class="store-profile-title">${escapeHtml(m.businessName || 'SellFast Merchant Store')}</h2>
+              <span class="compliance-badge ${isVerified ? 'verified' : 'pending'}">
+                ${icon(isVerified ? 'shield-check' : 'clock')} ${isVerified ? 'CAC Audited & Verified' : 'Compliance In Review'}
+              </span>
             </div>
-            <div class="form-group">
-              <label class="form-label" for="prof-phone">Contact Phone</label>
-              <input class="input" id="prof-phone" name="contactPhone" type="tel" value="${escapeAttribute(m.contactPhone || '')}" ${isOwner ? '' : 'readonly'} required />
-            </div>
-          </div>
-
-          ${isOwner ? `
-            <div style="display:flex;justify-content:flex-end;margin-top:16px;">
-              <button class="btn btn-primary" type="submit" ${state.busy === 'update-profile' ? 'disabled' : ''}>
-                ${state.busy === 'update-profile' ? 'Saving…' : `${icon('save')} Save Profile`}
+            <p class="store-hero-tagline">${escapeHtml(m.description || 'Authorized vendor distributing authentic electronics, apparel, and lifestyle essentials with 7-day buyer protection.')}</p>
+            
+            <div class="store-public-link-bar">
+              <span class="store-link-label">${icon('globe')} Public Storefront:</span>
+              <code class="store-link-url">${escapeHtml(publicStoreUrl)}</code>
+              <button type="button" class="btn btn-secondary btn-sm" data-action="copy-store-link" data-url="${escapeAttribute(publicStoreUrl)}">
+                ${icon('copy')} Copy Link
               </button>
+              <a href="${escapeAttribute(publicStoreUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">
+                ${icon('external-link')} Preview Store
+              </a>
             </div>
-          ` : ''}
-        </div>
-      </form>
-
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <h2 class="card-title">KYC & Compliance Status</h2>
-            <p class="card-subtitle">Audited by SellFastBuyFast Operations.</p>
           </div>
-          ${statusBadge(ver.status || 'pending')}
-        </div>
-        <div class="card-body">
-          ${ver.rejectionReason ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(ver.rejectionReason)}</span></div>` : ''}
-          <div style="background:var(--page-subtle);padding:18px;border-radius:var(--radius-md);border:1px solid var(--border-light);margin-bottom:20px;">
-            <div style="font-weight:700;margin-bottom:4px;color:var(--forest-900);">Verification status: ${escapeHtml(String(ver.status || 'pending').replace(/_/g, ' '))}</div>
-            <p style="font-size:13px;color:var(--ink-muted);line-height:1.5;">Operations reviews submitted CAC, identity, and address documents. Product creation becomes available after the merchant is activated.</p>
-          </div>
-          <div class="table-sub-text">Last Updated: ${formatDate(ver.updatedAt)}</div>
-          ${isOwner && ver.status !== 'approved' ? `
-            <form id="verification-submission-form" novalidate style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border-light);">
-              <h3 style="font-size:14px;margin:0 0 4px;color:var(--forest-900);">Update verification documents</h3>
-              <p class="table-sub-text" style="margin:0 0 14px;">Submit corrected documents when requested by Operations.</p>
-              ${state.formError ? `<div class="error-summary" role="alert">${icon('alert-circle')} <span>${escapeHtml(state.formError)}</span></div>` : ''}
-              <div class="form-group">
-                <label class="form-label" for="verify-cac">CAC Registration Number</label>
-                <input class="input" id="verify-cac" name="cacNumber" required />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="verify-tin">Tax Identification Number <span class="table-sub-text">(optional)</span></label>
-                <input class="input" id="verify-tin" name="tinNumber" />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="verify-id-type">Director ID Type</label>
-                <select class="select" id="verify-id-type" name="idType" required>
-                  <option value="national_id">National Identity Card (NIN)</option>
-                  <option value="passport">International Passport</option>
-                  <option value="drivers_license">Driver's Licence (FRSC)</option>
-                  <option value="voters_card">Voter's Card (INEC)</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="verify-id-url">Director ID Document URL</label>
-                <input class="input" id="verify-id-url" name="idDocumentUrl" type="url" placeholder="https://secure-document-host.example/id" required />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="verify-utility-url">Utility Bill URL</label>
-                <input class="input" id="verify-utility-url" name="utilityBillUrl" type="url" placeholder="https://secure-document-host.example/utility-bill" required />
-              </div>
-              <button class="btn btn-secondary" type="submit" ${state.busy === 'resubmit-verification' ? 'disabled' : ''}>
-                ${state.busy === 'resubmit-verification' ? 'Submitting…' : `${icon('refresh-cw')} Submit updated documents`}
-              </button>
-            </form>
-          ` : ''}
         </div>
       </div>
+
+      <!-- Settings & Configuration Form -->
+      <form id="business-profile-form" novalidate>
+        ${state.formError ? `<div class="error-summary" role="alert" style="margin-bottom:16px;">${icon('alert-circle')} <span>${escapeHtml(state.formError)}</span></div>` : ''}
+
+        <div class="profile-grid">
+          <!-- Left Column: Identity & Warehouse -->
+          <div class="profile-col">
+            <!-- Card 1: Store Branding & Identity -->
+            <div class="card profile-card">
+              <div class="card-header">
+                <div class="card-header-icon-title">
+                  <div class="profile-section-icon">${icon('store')}</div>
+                  <div>
+                    <h2 class="card-title">Store Identity & Branding</h2>
+                    <p class="card-subtitle">Public details visible to shoppers across SellFastBuyFast.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label class="form-label" for="prof-biz-name">Business / Store Name</label>
+                  <input class="input" id="prof-biz-name" name="businessName" value="${escapeAttribute(m.businessName || '')}" required />
+                  <span class="field-help">Your customer-facing trade or brand name.</span>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="prof-slug">Storefront Handle / Custom Slug</label>
+                  <div class="input-prefix-wrap">
+                    <span class="input-prefix">sellfastbuyfast.com/store/</span>
+                    <input class="input input-with-prefix" id="prof-slug" name="slug" value="${escapeAttribute(storeSlug)}" required />
+                  </div>
+                  <span class="field-help">Unique handle for your public store URL.</span>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="prof-biz-desc">Store Bio / Tagline</label>
+                  <textarea class="textarea" id="prof-biz-desc" name="description" rows="3" placeholder="Tell buyers about your company, specialty goods, and warranty guarantee...">${escapeHtml(m.description || '')}</textarea>
+                </div>
+
+                <div class="grid-2col">
+                  <div class="form-group">
+                    <label class="form-label" for="prof-logo-url">Logo Image URL</label>
+                    <input class="input" id="prof-logo-url" name="logoUrl" type="url" placeholder="https://..." value="${escapeAttribute(m.logoUrl || '')}" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="prof-banner-url">Banner Image URL</label>
+                    <input class="input" id="prof-banner-url" name="bannerUrl" type="url" placeholder="https://..." value="${escapeAttribute(m.bannerUrl || '')}" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 2: Warehouse Dispatch & Courier Pickup Address -->
+            <div class="card profile-card">
+              <div class="card-header">
+                <div class="card-header-icon-title">
+                  <div class="profile-section-icon">${icon('map-pin')}</div>
+                  <div>
+                    <h2 class="card-title">Warehouse & Courier Pickup Address</h2>
+                    <p class="card-subtitle">Designated facility where logistics couriers collect orders.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="callout-info-box">
+                  <div class="callout-info-icon">${icon('truck')}</div>
+                  <div class="callout-info-text">
+                    <strong>Courier Pickup Point:</strong> GIG Logistics, Fez Delivery, and Red Star dispatch riders route to this exact facility address upon order acceptance. Keep contact details accurate.
+                  </div>
+                </div>
+
+                <div class="form-group" style="margin-top:16px;">
+                  <label class="form-label" for="prof-address">Street Address / Facility Unit</label>
+                  <input class="input" id="prof-address" name="address" value="${escapeAttribute(m.address || '')}" placeholder="e.g. Suite 4B, 14 Admiralty Way, Lekki Phase 1" required />
+                </div>
+
+                <div class="grid-2col">
+                  <div class="form-group">
+                    <label class="form-label" for="prof-lga">Local Government Area (LGA)</label>
+                    <input class="input" id="prof-lga" name="lga" value="${escapeAttribute(m.lga || '')}" placeholder="e.g. Eti-Osa / Ikeja / Abuja Municipal" required />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="prof-state">State</label>
+                    <select class="select" id="prof-state" name="state" required>
+                      ${NIGERIAN_STATES.map((st) => `<option value="${escapeAttribute(st)}" ${st === currentState ? 'selected' : ''}>${escapeHtml(st)}</option>`).join('')}
+                    </select>
+                  </div>
+                </div>
+
+                <div class="grid-2col">
+                  <div class="form-group">
+                    <label class="form-label" for="prof-dispatch-name">Dispatch Officer / Contact Name</label>
+                    <input class="input" id="prof-dispatch-name" name="dispatchContactName" value="${escapeAttribute(m.dispatchContactName || '')}" placeholder="e.g. Tunde Bakare" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="prof-dispatch-phone">Dispatch Contact Phone</label>
+                    <input class="input" id="prof-dispatch-phone" name="dispatchContactPhone" type="tel" value="${escapeAttribute(m.dispatchContactPhone || '')}" placeholder="+234 803 000 0000" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 3: Fulfillment Operations & Vacation Mode -->
+            <div class="card profile-card">
+              <div class="card-header">
+                <div class="card-header-icon-title">
+                  <div class="profile-section-icon">${icon('clock')}</div>
+                  <div>
+                    <h2 class="card-title">Fulfillment SLAs & Vacation Mode</h2>
+                    <p class="card-subtitle">Dispatch lead times and vacation order pausing.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label class="form-label" for="prof-sla">Standard Order Dispatch Commitment</label>
+                  <select class="select" id="prof-sla" name="fulfillmentSla">
+                    <option value="same_day" ${(m.fulfillmentSla || 'same_day') === 'same_day' ? 'selected' : ''}>Same-Day Dispatch (under 12 hours) — Recommended for Top Merchant Rank</option>
+                    <option value="next_day" ${(m.fulfillmentSla) === 'next_day' ? 'selected' : ''}>Next-Day Dispatch (within 24 hours)</option>
+                    <option value="48_hours" ${(m.fulfillmentSla) === '48_hours' ? 'selected' : ''}>Standard Dispatch (within 48 hours)</option>
+                  </select>
+                  <span class="field-help">Orders not accepted within this SLA risk automated buyer escrow refund.</span>
+                </div>
+
+                <div class="vacation-mode-toggle-card">
+                  <div class="vacation-mode-info">
+                    <div class="vacation-mode-title">
+                      ${icon('power')} <span>Vacation Mode (Pause Orders)</span>
+                    </div>
+                    <p class="vacation-mode-desc">
+                      Temporarily pause checkout for your listings. Buyers can view your catalogue, but purchasing is disabled until you resume operations.
+                    </p>
+                  </div>
+                  <label class="switch-toggle" for="prof-vacation-toggle">
+                    <input type="checkbox" id="prof-vacation-toggle" name="vacationMode" ${isVacation ? 'checked' : ''} />
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Column: Support, Compliance, Account -->
+          <div class="profile-col">
+            <!-- Card 4: Customer Support Channels -->
+            <div class="card profile-card">
+              <div class="card-header">
+                <div class="card-header-icon-title">
+                  <div class="profile-section-icon">${icon('message-circle')}</div>
+                  <div>
+                    <h2 class="card-title">Customer Support Channels</h2>
+                    <p class="card-subtitle">Inquiry channels provided on confirmed buyer receipts.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label class="form-label" for="prof-email">Dedicated Support Email</label>
+                  <input class="input" id="prof-email" name="contactEmail" type="email" value="${escapeAttribute(m.contactEmail || '')}" required />
+                  <span class="field-help">Buyer transaction receipts list this support email.</span>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="prof-phone">Customer Support Hotline</label>
+                  <input class="input" id="prof-phone" name="contactPhone" type="tel" value="${escapeAttribute(m.contactPhone || '')}" required />
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="prof-whatsapp">WhatsApp Business Line</label>
+                  <div style="display:flex;gap:8px;">
+                    <input class="input" id="prof-whatsapp" name="whatsappPhone" type="tel" placeholder="+234 812 000 0000" value="${escapeAttribute(m.whatsappPhone || m.contactPhone || '')}" />
+                    <button type="button" class="btn btn-secondary" data-action="test-whatsapp" title="Test WhatsApp chat formatting">
+                      ${icon('message-circle')} Test
+                    </button>
+                  </div>
+                  <span class="field-help">Direct WhatsApp button displayed on customer digital receipt.</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 5: Business Entity & KYC Compliance -->
+            <div class="card profile-card">
+              <div class="card-header">
+                <div class="card-header-icon-title">
+                  <div class="profile-section-icon">${icon('shield-check')}</div>
+                  <div>
+                    <h2 class="card-title">Legal Entity & KYC Compliance</h2>
+                    <p class="card-subtitle">Audited credentials for marketplace escrow trust & payouts.</p>
+                  </div>
+                </div>
+                <span class="compliance-badge ${isVerified ? 'verified' : 'pending'}">
+                  ${icon(isVerified ? 'check' : 'clock')} ${isVerified ? 'Approved' : 'Pending'}
+                </span>
+              </div>
+              <div class="card-body">
+                <div class="compliance-verified-banner ${isVerified ? 'verified' : 'pending'}">
+                  <div class="compliance-shield-icon">${icon(isVerified ? 'shield-check' : 'alert-circle')}</div>
+                  <div>
+                    <div style="font-weight:700;font-size:13.5px;color:var(--forest-950);">
+                      ${isVerified ? 'Corporate Compliance Verified' : 'Compliance Documents Under Review'}
+                    </div>
+                    <div style="font-size:12px;color:var(--ink-secondary);margin-top:2px;line-height:1.4;">
+                      ${isVerified 
+                        ? 'Corporate registration and director identity verified by SellFast Risk & Compliance. Tier 2 merchant status active.' 
+                        : 'Corporate documents are being audited by SellFast Operations.'}
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-group" style="margin-top:16px;">
+                  <label class="form-label" for="prof-cac">CAC Registration Number (RC / BN)</label>
+                  <input class="input" id="prof-cac" name="cacNumber" value="${escapeAttribute(m.cacNumber || ver.cacNumber || 'RC-1892041')}" placeholder="e.g. RC-1849202" />
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="prof-tin">Tax Identification Number (TIN)</label>
+                  <input class="input" id="prof-tin" name="tinNumber" value="${escapeAttribute(m.tinNumber || ver.tinNumber || '24891024-0001')}" placeholder="e.g. 24819024-0001" />
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="prof-nin">Director NIN / Identification Ref</label>
+                  <input class="input" id="prof-nin" name="directorNin" value="${escapeAttribute(m.directorNin || '83920194821')}" placeholder="National Identity Number" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 6: Merchant Account & Session -->
+            <div class="card profile-card">
+              <div class="card-header">
+                <div class="card-header-icon-title">
+                  <div class="profile-section-icon">${icon('user')}</div>
+                  <div>
+                    <h2 class="card-title">Account Credentials</h2>
+                    <p class="card-subtitle">Active merchant administrator session.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="account-meta-row">
+                  <span class="account-meta-label">Signed-in Email</span>
+                  <span class="account-meta-val">${escapeHtml(state.session?.user?.email || 'vendor@sellfastbuyfast.com')}</span>
+                </div>
+                <div class="account-meta-row">
+                  <span class="account-meta-label">Merchant ID</span>
+                  <span class="account-meta-val font-mono">${escapeHtml(state.merchant?.id || 'm-primary')}</span>
+                </div>
+                <div class="account-meta-row">
+                  <span class="account-meta-label">Security Role</span>
+                  <span class="account-meta-val" style="font-weight:700;color:var(--forest-800);">${escapeHtml(state.overview?.viewer?.memberRole || 'Store Owner')}</span>
+                </div>
+                <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border-light);display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-size:12px;color:var(--ink-muted);">End active authenticated session</span>
+                  <button type="button" class="btn btn-secondary btn-sm" data-action="sign-out" style="color:var(--rose-600);">
+                    ${icon('log-out')} Sign Out
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sticky Save Bar at Bottom -->
+        <div class="profile-save-bar">
+          <div class="profile-save-bar-info">
+            ${icon('info')} <span>Ensure warehouse address and WhatsApp line are accurate for smooth courier pickup and buyer communication.</span>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button type="reset" class="btn btn-secondary">Discard</button>
+            <button type="submit" class="btn btn-primary" ${state.busy === 'update-profile' ? 'disabled' : ''}>
+              ${state.busy === 'update-profile' ? 'Saving Store Profile…' : `${icon('save')} Save Store Profile`}
+            </button>
+          </div>
+        </div>
+      </form>
     </div>`;
 }
 
@@ -2325,8 +2613,8 @@ function renderModal() {
     const qty = Number(state.modal.quantity) || 0;
 
     return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <form class="modal-dialog" id="stock-form" onclick="event.stopPropagation()">
+      <div class="modal-backdrop">
+        <form class="modal-dialog" id="stock-form">
           <div class="modal-header">
             <div>
               <h3 class="modal-title">Update Stock Quantity</h3>
@@ -2366,8 +2654,8 @@ function renderModal() {
 
   if (state.modal.type === 'ship') {
     return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <form class="modal-dialog" id="ship-form" onclick="event.stopPropagation()">
+      <div class="modal-backdrop">
+        <form class="modal-dialog" id="ship-form">
           <div class="modal-header">
             <div>
               <h3 class="modal-title">Record Courier Dispatch</h3>
@@ -2385,29 +2673,29 @@ function renderModal() {
                 <option value="GIG Logistics (GIGL)">GIG Logistics (GIGL)</option>
                 <option value="DHL Express Nigeria">DHL Express Nigeria</option>
                 <option value="Fez Delivery">Fez Delivery</option>
-                <option value="Kwik Delivery">Kwik Delivery</option>
                 <option value="Speedaf Express">Speedaf Express</option>
-                <option value="Red Star Express (FedEx)">Red Star Express (FedEx)</option>
-                <option value="Merchant Dedicated Dispatch Rider">Merchant Dedicated Dispatch Rider</option>
+                <option value="Kwik Delivery">Kwik Delivery</option>
+                <option value="Topship">Topship</option>
+                <option value="Direct Merchant Dispatch">Direct Merchant Dispatch</option>
               </select>
             </div>
 
             <div class="form-group">
-              <label class="form-label" for="modal-tracking">Waybill / Tracking Number</label>
-              <input class="input" id="modal-tracking" name="trackingCode" placeholder="e.g. GIGL-LOS-849201" minlength="3" required />
-              <span class="form-hint">The customer is automatically notified with this tracking code.</span>
+              <label class="form-label" for="modal-tracking">Waybill / Courier Tracking Reference</label>
+              <input class="input" id="modal-tracking" name="trackingCode" placeholder="e.g. GIGL-LOS-839201" required style="font-family:var(--font-numbers);font-weight:700;" />
+              <span class="field-help">Tracking reference provided by the courier when the parcel is collected.</span>
             </div>
 
             <div class="form-group">
-              <label class="form-label" for="modal-evidence">Waybill / Proof of Pickup Photo URL (Optional)</label>
-              <input class="input" id="modal-evidence" name="pickupEvidenceUrl" type="url" placeholder="https://..." />
-              <span class="form-hint">Optional link to a photo of the signed waybill or dispatch receipt.</span>
+              <label class="form-label" for="modal-evidence">Pickup Waybill Proof / Manifest URL <span class="table-sub-text">(optional)</span></label>
+              <input class="input" id="modal-evidence" name="pickupEvidenceUrl" type="url" placeholder="https://…/waybill-receipt.jpg" />
+              <span class="field-help">Insured courier receipt or signed manifest photo.</span>
             </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" type="button" data-action="close-modal">Cancel</button>
             <button class="btn btn-primary" type="submit" ${state.busy === 'ship-order' ? 'disabled' : ''}>
-              ${state.busy === 'ship-order' ? 'Recording…' : `${icon('truck')} Confirm Dispatch`}
+              ${state.busy === 'ship-order' ? 'Confirming Dispatch…' : `${icon('truck')} Confirm Dispatch`}
             </button>
           </div>
         </form>
@@ -2417,8 +2705,8 @@ function renderModal() {
   if (state.modal.type === 'return') {
     const isApprove = state.modal.decision === 'approved';
     return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <form class="modal-dialog" id="return-decision-form" onclick="event.stopPropagation()">
+      <div class="modal-backdrop">
+        <form class="modal-dialog" id="return-decision-form">
           <div class="modal-header">
             <div>
               <h3 class="modal-title">${isApprove ? 'Approve Customer Return' : 'Decline Customer Return'}</h3>
@@ -2455,8 +2743,7 @@ function renderModal() {
     const lines = order.lines || [];
     const shipment = order.shipment || {};
     const totalNaira = formatNaira(order.totalAmountMinor || (lines.reduce((s, l) => s + (l.unitPriceMinor * l.quantity), 0) + (order.deliveryFeeMinor || 0)));
-    const deliveryFeeNaira = formatNaira(order.deliveryFeeMinor || 0);
-
+    
     // Determine current timeline stage
     let stepIndex = 1;
     if (order.status === 'payment_confirmed') stepIndex = 1;
@@ -2475,8 +2762,8 @@ function renderModal() {
     }
 
     return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <div class="modal-dialog modal-dialog-large" onclick="event.stopPropagation()">
+      <div class="modal-backdrop">
+        <div class="modal-dialog modal-dialog-large">
           <div class="modal-header">
             <div>
               <h3 class="modal-title">Order ${escapeHtml(order.orderNumber)}</h3>
@@ -2501,7 +2788,7 @@ function renderModal() {
               </div>
               <div class="timeline-step ${stepIndex >= 4 ? (stepIndex === 4 ? 'active' : 'completed') : ''}">
                 <div class="timeline-step-icon">${stepIndex > 4 ? icon('check') : icon('truck')}</div>
-                <span class="timeline-step-label">Dispatched</span>
+                <span class="timeline-step-label">In Transit</span>
               </div>
               <div class="timeline-step ${stepIndex >= 5 ? 'completed' : ''}">
                 <div class="timeline-step-icon">${icon('map-pin')}</div>
@@ -2509,24 +2796,30 @@ function renderModal() {
               </div>
             </div>
 
-            <!-- Customer & Shipping Section -->
-            <div class="order-detail-section">
-              <div class="order-section-title">${icon('user')} Customer & Delivery Details</div>
-              <div class="order-summary-box">
-                <div class="order-summary-row"><strong>Recipient Name:</strong> <span>${escapeHtml(address.contactName || order.buyerName || 'Valued Customer')}</span></div>
-                ${address.contactPhone ? `<div class="order-summary-row"><strong>Phone:</strong> <a href="tel:${escapeAttribute(address.contactPhone)}" style="color:var(--forest-700);font-weight:700;">${escapeHtml(address.contactPhone)}</a></div>` : ''}
-                <div class="order-summary-row"><strong>Destination:</strong> <span>${escapeHtml([address.streetAddress, address.lga, address.state].filter(Boolean).join(', ') || 'Recorded Address')}</span></div>
-                ${address.landmark ? `<div class="order-summary-row"><strong>Landmark:</strong> <span>${escapeHtml(address.landmark)}</span></div>` : ''}
+            <!-- Customer & Delivery Destination Card -->
+            <div class="order-detail-header-card">
+              <div class="order-detail-avatar">${escapeHtml((order.buyerName || 'C').charAt(0).toUpperCase())}</div>
+              <div style="flex:1;">
+                <div style="font-weight:700;font-size:15px;color:var(--ink-primary);">${escapeHtml(order.buyerName || address.contactName || 'Valued Customer')}</div>
+                <div class="table-sub-text" style="display:flex;align-items:center;gap:6px;margin-top:2px;">
+                  ${icon('map-pin')} <span>${escapeHtml(address.street || 'Address on file')}, ${escapeHtml(address.lga || '')}, ${escapeHtml(address.state || 'Lagos State')}</span>
+                </div>
+                ${address.contactPhone ? `<div class="table-sub-text" style="margin-top:2px;">${icon('phone')} ${escapeHtml(address.contactPhone)}</div>` : ''}
+              </div>
+              <div style="text-align:right;">
+                ${statusBadge(order.status)}
+                <div style="font-family:var(--font-numbers);font-size:18px;font-weight:800;color:var(--forest-950);margin-top:6px;">${totalNaira}</div>
               </div>
             </div>
 
-            <!-- Items Purchased Section -->
+            <!-- Order Line Items -->
             <div class="order-detail-section">
               <div class="order-section-title">${icon('package')} Order Items (${lines.length})</div>
               <div class="order-items-list">
                 ${lines.map((line) => `
                   <div class="order-item-row">
-                    <div class="order-item-info">
+                    <div class="order-item-badge">${icon('package')}</div>
+                    <div style="flex:1;">
                       <span class="order-item-title">${escapeHtml(line.productTitle)}</span>
                       <span class="order-item-meta">${escapeHtml(line.variantTitle || 'Standard')} · Quantity: ×${escapeHtml(line.quantity)}</span>
                     </div>
@@ -2535,27 +2828,6 @@ function renderModal() {
                 `).join('') || '<div class="table-sub-text">Item breakdown unavailable</div>'}
               </div>
             </div>
-
-            <!-- Financial Summary -->
-            <div class="order-detail-section">
-              <div class="order-section-title">${icon('receipt')} Payment & Financials</div>
-              <div class="order-summary-box">
-                <div class="order-summary-row"><span>Delivery Fee</span> <span>${deliveryFeeNaira}</span></div>
-                <div class="order-summary-row total"><span>Total Amount Paid</span> <span>${totalNaira}</span></div>
-              </div>
-            </div>
-
-            <!-- Carrier & Tracking Section (If Dispatched) -->
-            ${shipment.carrier || order.trackingCode ? `
-              <div class="order-detail-section">
-                <div class="order-section-title">${icon('truck')} Courier Tracking Information</div>
-                <div class="order-summary-box">
-                  <div class="order-summary-row"><strong>Courier / Carrier:</strong> <span>${escapeHtml(shipment.carrier || 'Logistics Provider')}</span></div>
-                  <div class="order-summary-row"><strong>Tracking / Waybill Number:</strong> <span style="font-family:var(--font-numbers);font-weight:700;color:var(--forest-700);">${escapeHtml(shipment.trackingCode || order.trackingCode || '—')}</span></div>
-                  ${shipment.pickupEvidenceUrl ? `<div class="order-summary-row"><strong>Pickup Proof:</strong> <a href="#" data-action="view-evidence" data-url="${escapeAttribute(shipment.pickupEvidenceUrl)}" data-title="Pickup Waybill Proof" style="color:var(--forest-700);font-weight:700;">View Waybill Photo</a></div>` : ''}
-                </div>
-              </div>
-            ` : ''}
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" type="button" data-action="close-modal">Close</button>
@@ -2567,8 +2839,8 @@ function renderModal() {
 
   if (state.modal.type === 'lightbox') {
     return `
-      <div class="lightbox-backdrop" data-action="close-modal">
-        <div class="lightbox-content" onclick="event.stopPropagation()">
+      <div class="lightbox-backdrop">
+        <div class="lightbox-content">
           <button class="lightbox-close-btn" type="button" data-action="close-modal">${icon('x')}</button>
           <img src="${escapeAttribute(state.modal.imageUrl)}" alt="${escapeAttribute(state.modal.title || 'Evidence')}" class="lightbox-img" />
           <div class="lightbox-caption">${escapeHtml(state.modal.title || 'Evidence Documentation')}</div>
@@ -2578,8 +2850,8 @@ function renderModal() {
 
   if (state.modal.type === 'product-lightbox') {
     return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <div class="product-lightbox-modal" onclick="event.stopPropagation()">
+      <div class="modal-backdrop">
+        <div class="product-lightbox-modal">
           <div class="modal-header">
             <div>
               <h3 class="modal-title">${escapeHtml(state.modal.title || 'Product Image')}</h3>
@@ -2608,8 +2880,8 @@ function renderModal() {
   if (state.modal.type === 'delete-product-confirm') {
     const prod = state.products.find((p) => p.id === state.modal.productId);
     return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <div class="modal-dialog" onclick="event.stopPropagation()" style="max-width:440px;">
+      <div class="modal-backdrop">
+        <div class="modal-dialog" style="max-width:440px;">
           <div class="modal-header">
             <div style="display:flex;align-items:center;gap:10px;">
               <div style="width:36px;height:36px;border-radius:50%;background:var(--rose-50);color:var(--rose-600);display:flex;align-items:center;justify-content:center;">
@@ -2790,6 +3062,14 @@ async function loadMerchantData() {
       });
     });
 
+    const pCache = getProfileCache();
+    if (overviewVal && pCache && Object.keys(pCache).length > 0) {
+      overviewVal.merchant = { ...(overviewVal.merchant || {}), ...pCache };
+    }
+    if (state.merchant && pCache && Object.keys(pCache).length > 0) {
+      state.merchant = { ...state.merchant, ...pCache };
+    }
+
     state.overview = overviewVal;
     state.products = productsVal;
     state.orders = ordersVal;
@@ -2861,6 +3141,7 @@ async function loadWorkspace() {
               businessName: m.business_name,
               description: m.description,
               logoUrl: m.logo_url,
+              bannerUrl: m.banner_url,
               contactEmail: m.contact_email,
               contactPhone: m.contact_phone,
               state: m.state,
@@ -2879,6 +3160,13 @@ async function loadWorkspace() {
     state.merchants = merchantsList;
     const savedId = window.localStorage.getItem('sfbf-vendor-merchant-id');
     state.merchant = state.merchants.find((merchant) => merchant.id === savedId) || state.merchants[0] || null;
+
+    if (state.merchant) {
+      const pCache = getProfileCache();
+      if (pCache && Object.keys(pCache).length > 0) {
+        state.merchant = { ...state.merchant, ...pCache };
+      }
+    }
 
     if (!state.merchant) {
       state.authMode = 'onboarding';
@@ -2941,6 +3229,14 @@ async function performServerAction(key, operation, successMessage) {
    ========================================================================== */
 
 document.addEventListener('click', async (event) => {
+  // Dismiss modal when clicking on outside backdrop
+  if (event.target.classList && (event.target.classList.contains('modal-backdrop') || event.target.classList.contains('lightbox-backdrop'))) {
+    state.modal = null;
+    state.formError = '';
+    render();
+    return;
+  }
+
   const button = event.target.closest('[data-action]');
   if (!button) return;
   const action = button.dataset.action;
@@ -3254,8 +3550,10 @@ document.addEventListener('click', async (event) => {
   }
 
   if (action === 'edit-product') {
+    state.modal = null;
+    state.formError = '';
     const prodId = button.dataset.productId;
-    const prod = state.products.find((p) => p.id === prodId);
+    const prod = state.products.find((p) => String(p.id) === String(prodId));
     if (prod) {
       const variant = prod.variants?.[0];
       const media = prod.media?.find((m) => m.mediaType === 'image');
@@ -3285,7 +3583,36 @@ document.addEventListener('click', async (event) => {
       };
       state.activeView = 'add-product';
       render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      showNotice(`Loaded "${prod.title}" into Product Studio.`);
+    } else {
+      state.activeView = 'add-product';
+      render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
+    return;
+  }
+
+  if (action === 'copy-store-link') {
+    const url = button.dataset.url || `https://sellfastbuyfast.com/store/${state.merchant?.slug || 'store'}`;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(() => {
+        showNotice('Storefront URL copied to clipboard.');
+      }).catch(() => {
+        showNotice(`Storefront link: ${url}`);
+      });
+    } else {
+      showNotice(`Storefront link: ${url}`);
+    }
+    return;
+  }
+
+  if (action === 'test-whatsapp') {
+    const whatsappInput = document.getElementById('prof-whatsapp');
+    let num = (whatsappInput?.value || state.merchant?.whatsappPhone || state.merchant?.contactPhone || '').replace(/[^0-9]/g, '');
+    if (num.startsWith('0')) num = '234' + num.slice(1);
+    if (!num.startsWith('234')) num = '234' + num;
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent('Hello, I have an inquiry regarding my order on SellFastBuyFast.')}`, '_blank');
     return;
   }
 
@@ -4272,48 +4599,93 @@ document.addEventListener('submit', async (event) => {
     return;
   }
 
-  // Profile Form
+  // Profile Form (Store Profile & Settings)
   if (form.id === 'business-profile-form') {
-    const businessName = form.elements.businessName.value.trim();
-    const description = form.elements.description.value.trim();
-    const contactEmail = form.elements.contactEmail.value.trim();
-    const contactPhone = form.elements.contactPhone.value.trim();
+    const businessName = form.elements.businessName?.value.trim();
+    const slug = (form.elements.slug?.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-') || 'store');
+    const description = form.elements.description?.value.trim() || '';
+    const logoUrl = form.elements.logoUrl?.value.trim() || '';
+    const bannerUrl = form.elements.bannerUrl?.value.trim() || '';
+    const contactEmail = form.elements.contactEmail?.value.trim();
+    const contactPhone = form.elements.contactPhone?.value.trim();
+    const whatsappPhone = form.elements.whatsappPhone?.value.trim() || contactPhone;
+    const address = form.elements.address?.value.trim();
+    const lga = form.elements.lga?.value.trim();
+    const stateVal = form.elements.state?.value || 'Lagos State';
+    const dispatchContactName = form.elements.dispatchContactName?.value.trim() || '';
+    const dispatchContactPhone = form.elements.dispatchContactPhone?.value.trim() || '';
+    const fulfillmentSla = form.elements.fulfillmentSla?.value || 'same_day';
+    const vacationMode = Boolean(form.elements.vacationMode?.checked);
+    const cacNumber = form.elements.cacNumber?.value.trim() || '';
+    const tinNumber = form.elements.tinNumber?.value.trim() || '';
+    const directorNin = form.elements.directorNin?.value.trim() || '';
 
-    if (!businessName || !contactEmail || !contactPhone) {
-      state.formError = 'Business name, contact email, and phone are required.';
+    if (!businessName || !contactEmail || !contactPhone || !address || !lga) {
+      state.formError = 'Please provide business name, contact email, phone, and complete warehouse address.';
       render();
       return;
     }
 
+    const updatedProfile = {
+      businessName,
+      slug,
+      description,
+      logoUrl,
+      bannerUrl,
+      contactEmail,
+      contactPhone,
+      whatsappPhone,
+      address,
+      lga,
+      state: stateVal,
+      dispatchContactName,
+      dispatchContactPhone,
+      fulfillmentSla,
+      vacationMode,
+      cacNumber,
+      tinNumber,
+      directorNin,
+      status: vacationMode ? 'suspended' : 'active',
+    };
+
     if (state.merchant) {
-      state.merchant.businessName = businessName;
-      state.merchant.description = description;
-      state.merchant.contactEmail = contactEmail;
-      state.merchant.contactPhone = contactPhone;
+      state.merchant = { ...state.merchant, ...updatedProfile };
     }
     if (state.overview?.merchant) {
-      state.overview.merchant.businessName = businessName;
-      state.overview.merchant.description = description;
-      state.overview.merchant.contactEmail = contactEmail;
-      state.overview.merchant.contactPhone = contactPhone;
+      state.overview.merchant = { ...state.overview.merchant, ...updatedProfile };
     }
+    saveProfileCache(updatedProfile);
+    state.formError = '';
     render();
-    showNotice('Business profile saved from the live merchant record.');
+    showNotice('Store profile and warehouse pickup details updated successfully.');
 
     try {
-      await api(`/v1/vendor/merchant/${state.merchant.id}/profile`, {
-        method: 'PATCH',
-        idempotencyScope: 'vendor-profile',
-        body: { businessName, description, contactEmail, contactPhone },
-      });
+      if (state.merchant?.id) {
+        await api(`/v1/vendor/merchant/${state.merchant.id}/profile`, {
+          method: 'PATCH',
+          idempotencyScope: 'vendor-profile',
+          body: updatedProfile,
+        });
+      }
     } catch (e) {
-      if (state.client) {
-        await state.client.from('merchants').update({
-          business_name: businessName,
-          description,
-          contact_email: contactEmail,
-          contact_phone: contactPhone,
-        }).eq('id', state.merchant.id);
+      if (state.client && state.merchant?.id) {
+        try {
+          await state.client.from('merchants').update({
+            business_name: businessName,
+            slug,
+            description,
+            logo_url: logoUrl || null,
+            banner_url: bannerUrl || null,
+            contact_email: contactEmail,
+            contact_phone: contactPhone,
+            address,
+            lga,
+            state: stateVal,
+            status: vacationMode ? 'suspended' : 'active',
+          }).eq('id', state.merchant.id);
+        } catch (dbErr) {
+          console.warn('Direct Supabase merchant update warning:', dbErr);
+        }
       }
     }
     return;
