@@ -256,10 +256,12 @@ svg.lucide {
    ========================================================================== */
 
 .auth-viewport {
+  height: 100%;
   min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
   max-width: 100vw;
-  overflow-x: hidden;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 1fr;
   position: relative;
@@ -268,23 +270,46 @@ svg.lucide {
 
 @media (min-width: 1024px) {
   .auth-viewport {
-    grid-template-columns: 1.18fr 1fr;
+    height: 100vh;
+    max-height: 100vh;
+    grid-template-columns: 1.15fr 1fr;
+    overflow: hidden;
   }
 }
 
-/* Mobile Background Art Integration */
+/* Mobile Background Art Integration & Scroll Viewport */
 @media (max-width: 1023px) {
   .auth-viewport {
+    height: 100%;
+    min-height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
     background: url('assets/vendor-receipt-macro.jpg') center/cover no-repeat fixed;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  }
+
+  .auth-viewport::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .auth-viewport::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.28);
+    border-radius: 999px;
   }
 
   .auth-viewport::before {
     content: '';
-    position: absolute;
+    position: fixed;
     inset: 0;
-    background: linear-gradient(180deg, rgba(6, 46, 37, 0.82) 0%, rgba(3, 28, 22, 0.94) 100%);
+    background: linear-gradient(180deg, rgba(6, 46, 37, 0.86) 0%, rgba(3, 28, 22, 0.95) 100%);
     backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     z-index: 1;
+    pointer-events: none;
   }
 }
 
@@ -301,7 +326,10 @@ svg.lucide {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    padding: 56px 48px;
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
+    padding: 44px 40px;
     color: #ffffff;
   }
 }
@@ -335,12 +363,12 @@ svg.lucide {
 
 /* Floating Large Logo (No white pill) */
 .auth-floating-logo-wrap {
-  margin-bottom: 42px;
+  margin-bottom: 28px;
   display: inline-block;
 }
 
 .auth-floating-logo {
-  height: 64px;
+  height: 52px;
   width: auto;
   object-fit: contain;
   filter: drop-shadow(0 4px 20px rgba(0, 0, 0, 0.45)) drop-shadow(0 0 28px rgba(255, 255, 255, 0.5));
@@ -348,12 +376,12 @@ svg.lucide {
 
 .auth-hero-headline {
   font-family: var(--font-display);
-  font-size: 42px;
+  font-size: 36px;
   font-weight: 800;
-  line-height: 1.12;
+  line-height: 1.15;
   letter-spacing: -0.035em;
-  margin-bottom: 18px;
-  max-width: 500px;
+  margin-bottom: 14px;
+  max-width: 480px;
 }
 
 .auth-hero-headline span {
@@ -361,28 +389,28 @@ svg.lucide {
 }
 
 .auth-hero-description {
-  font-size: 16.5px;
+  font-size: 15px;
   color: rgba(255, 255, 255, 0.88);
-  line-height: 1.6;
-  max-width: 460px;
+  line-height: 1.55;
+  max-width: 440px;
 }
 
 .auth-hero-features {
   display: grid;
-  gap: 14px;
-  margin-top: 38px;
+  gap: 10px;
+  margin-top: 28px;
 }
 
 .auth-feature-pill {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 13px 18px;
+  padding: 11px 16px;
   background: rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-md);
-  font-size: 14.5px;
+  font-size: 13.5px;
   font-weight: 600;
 }
 
@@ -396,10 +424,10 @@ svg.lucide {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: 12.5px;
   color: rgba(255, 255, 255, 0.65);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
-  padding-top: 24px;
+  padding-top: 18px;
 }
 
 /* Right Form Container */
@@ -407,30 +435,74 @@ svg.lucide {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 24px 16px;
-  min-height: 100vh;
+  justify-content: flex-start;
+  padding: 24px 18px;
+  min-height: 100%;
   width: 100%;
   position: relative;
   z-index: 2;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(6, 60, 48, 0.25) transparent;
 }
 
-@media (min-width: 640px) {
+.auth-form-pane::-webkit-scrollbar {
+  width: 6px;
+}
+
+.auth-form-pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.auth-form-pane::-webkit-scrollbar-thumb {
+  background: rgba(6, 60, 48, 0.22);
+  border-radius: 999px;
+}
+
+.auth-form-pane::-webkit-scrollbar-thumb:hover {
+  background: var(--forest-700);
+}
+
+@media (min-width: 1024px) {
   .auth-form-pane {
-    padding: 48px 32px;
+    height: 100vh;
+    max-height: 100vh;
+    padding: 28px 36px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .auth-form-pane {
+    min-height: 100%;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    padding: 24px 16px 40px;
   }
 }
 
 .auth-card-container {
   width: 100%;
-  max-width: 450px;
+  max-width: 500px;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 1023px) {
+  .auth-card-container {
+    margin: 0 auto;
+    max-width: 480px;
+  }
 }
 
 .mobile-brand-header {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 26px;
+  margin-bottom: 20px;
 }
 
 @media (min-width: 1024px) {
@@ -440,7 +512,7 @@ svg.lucide {
 }
 
 .mobile-floating-logo {
-  height: 54px;
+  height: 52px;
   width: auto;
   object-fit: contain;
   filter: drop-shadow(0 4px 20px rgba(0, 0, 0, 0.45)) drop-shadow(0 0 28px rgba(255, 255, 255, 0.6));
@@ -450,32 +522,32 @@ svg.lucide {
   background: var(--surface);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-xl);
-  padding: 34px 30px;
+  padding: 26px 28px 22px;
   box-shadow: var(--shadow-xl);
   width: 100%;
 }
 
 @media (max-width: 480px) {
   .auth-box {
-    padding: 26px 20px;
+    padding: 20px 16px 18px;
     border-radius: var(--radius-lg);
   }
 }
 
 .auth-title {
   font-family: var(--font-display);
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--ink-primary);
   letter-spacing: -0.03em;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .auth-subtitle {
   color: var(--ink-muted);
-  font-size: 14.5px;
-  margin-bottom: 22px;
-  line-height: 1.5;
+  font-size: 13.5px;
+  margin-bottom: 16px;
+  line-height: 1.45;
 }
 
 /* Tab Switcher */
@@ -484,14 +556,14 @@ svg.lucide {
   background: var(--page-subtle);
   padding: 4px;
   border-radius: var(--radius-md);
-  margin-bottom: 22px;
+  margin-bottom: 16px;
   border: 1px solid var(--border-light);
 }
 
 .auth-segment-tab {
   flex: 1;
   text-align: center;
-  padding: 9px 12px;
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
   font-size: 13.5px;
   font-weight: 700;
@@ -503,6 +575,65 @@ svg.lucide {
   background: var(--surface);
   color: var(--forest-900);
   box-shadow: var(--shadow-xs);
+}
+
+/* 2-Column Responsive Form Row for Auth Registration */
+.auth-grid-2col {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  width: 100%;
+}
+
+@media (min-width: 480px) {
+  .auth-grid-2col {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+}
+
+.auth-box .form-group {
+  margin-bottom: 12px;
+  gap: 5px;
+}
+
+.auth-box .input {
+  min-height: 42px;
+  padding: 8px 13px;
+  font-size: 14px;
+}
+
+.auth-box .input.has-icon-left {
+  padding-left: 38px;
+}
+
+.auth-box .input.has-icon-right {
+  padding-right: 38px;
+}
+
+.auth-box .input-icon-left {
+  left: 12px;
+}
+
+.auth-box .input-icon-right-btn {
+  right: 10px;
+}
+
+.auth-box .checkbox-row {
+  margin: 6px 0 14px;
+  font-size: 13px;
+}
+
+.auth-box .btn-full {
+  width: 100%;
+  min-height: 44px;
+}
+
+@media (max-width: 768px) {
+  .auth-box .input {
+    font-size: 16px; /* Prevents auto-zoom in iOS Safari */
+    min-height: 44px;
+  }
 }
 
 /* ==========================================================================
