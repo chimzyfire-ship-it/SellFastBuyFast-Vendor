@@ -8,10 +8,10 @@ const helperStart = source.indexOf('function productCategoryProfile(categoryName
 const helperEnd = source.indexOf('function safeMediaUrl(value)', helperStart);
 const uploadStart = source.indexOf('async function uploadProductMediaImage(file)');
 const uploadEnd = source.indexOf("document.addEventListener('dragover'", uploadStart);
-function harness(upload = async () => ({ error: null })) {
+function harness(upload = async () => ({ error: null }), dimensions = { width: 1200, height: 1200 }) {
   const nodes = new Map();
   for (const id of ['prod-image', 'prod-image-file', 'prod-image-upload-status', 'cover-thumb-preview']) {
-    nodes.set(id, { value: '', style: {}, dispatchEvent() {} });
+    nodes.set(id, { value: '', style: {}, dispatchEvent() {}, removeAttribute() {}, setAttribute() {} });
   }
   const submit = { disabled: false };
   const notices = [];
@@ -33,8 +33,8 @@ function harness(upload = async () => ({ error: null })) {
     },
     Image: class {
       constructor() {
-        this.naturalWidth = 1200;
-        this.naturalHeight = 1200;
+        this.naturalWidth = dimensions.width;
+        this.naturalHeight = dimensions.height;
       }
       set src(_value) {
         this.onload();
@@ -86,6 +86,16 @@ test('Concurrent uploads are ignored and an upload cannot overwrite a different 
   assert.equal(h.state.productDraft.imageUrl, 'https://storage.invalid/other.png');
 });
 
+test('A non-recommended image size uploads for Operations review instead of blocking the listing', async () => {
+  const h = harness(undefined, { width: 320, height: 1200 });
+  await h.run(photo);
+  assert.equal(h.calls(), 1);
+  assert.equal(h.state.productDraft.imageUrl, 'https://storage.invalid/photo.png');
+  assert.equal(h.state.productDraft.imageValidation.valid, true);
+  assert.equal(h.state.productDraft.imageValidation.meetsGridRecommendation, false);
+  assert.match(h.nodes.get('prod-image-upload-status').innerHTML, /Recommended for the customer app grid/);
+});
+
 test('Unsupported formats and oversized files never request an upload', async () => {
   const h = harness();
   await h.run({ ...photo, type: 'image/heic' });
@@ -106,4 +116,12 @@ test('Save as Draft uses validated server submission instead of adding a tempora
   assert.equal(submitted, true);
   assert.equal(form.elements.submitForReview.checked, false);
   assert.equal(state.productDraft.submitForReview, false);
+});
+
+test('Product Studio uses its native form submit instead of the catalogue-row submit action', () => {
+  const studioStart = source.indexOf('<form id="product-form"');
+  const studioEnd = source.indexOf('</form>', studioStart);
+  const studio = source.slice(studioStart, studioEnd);
+  assert.match(studio, /<button class="btn btn-primary" type="submit"/);
+  assert.doesNotMatch(studio, /type="submit" data-action="submit-product"/);
 });
