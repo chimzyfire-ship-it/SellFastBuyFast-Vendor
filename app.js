@@ -162,15 +162,15 @@ function isMediaUrlValid(value) {
 function productCategoryProfile(categoryName = '') {
   const category = categoryName.toLowerCase();
   if (/fashion|clothing|footwear|shoe|apparel|jewell|bag/.test(category)) {
-    return { key: 'fashion', minWidth: 1200, minHeight: 1200, ratios: [1], label: 'Square (1:1), at least 1200 × 1200 px', detail: 'Show the full item on a clean background. Include every colour or size offered.' };
+    return { key: 'fashion', minWidth: 600, minHeight: 400, ratios: [1, 4 / 3, 3 / 2, 16 / 9, 3 / 4, 1200 / 796], label: 'Square, landscape (3:2, 4:3) or portrait, at least 600px', detail: 'Show the full item on a clean background. Include every colour or size offered.' };
   }
   if (/electronic|phone|computer|appliance|tech/.test(category)) {
-    return { key: 'electronics', minWidth: 1200, minHeight: 900, ratios: [1, 4 / 3, 3 / 4], label: 'Square or 4:3, at least 1200 × 900 px', detail: 'Show the item powered on where useful, plus ports, model details and accessories.' };
+    return { key: 'electronics', minWidth: 600, minHeight: 400, ratios: [1, 4 / 3, 3 / 2, 16 / 9, 3 / 4], label: 'Square, 4:3, or 16:9, at least 600px', detail: 'Show the item powered on where useful, plus ports, model details and accessories.' };
   }
   if (/beauty|health|food|grocery/.test(category)) {
-    return { key: 'consumables', minWidth: 1200, minHeight: 1200, ratios: [1], label: 'Square (1:1), at least 1200 × 1200 px', detail: 'Keep the label, size and expiry information clearly readable.' };
+    return { key: 'consumables', minWidth: 600, minHeight: 400, ratios: [1, 4 / 3, 3 / 2, 3 / 4], label: 'Square or 4:3, at least 600px', detail: 'Keep the label, size and expiry information clearly readable.' };
   }
-  return { key: 'standard', minWidth: 1200, minHeight: 1200, ratios: [1], label: 'Square (1:1), at least 1200 × 1200 px', detail: 'Use a bright, sharp product photo on a clean background.' };
+  return { key: 'standard', minWidth: 600, minHeight: 400, ratios: [1, 4 / 3, 3 / 2, 16 / 9, 3 / 4], label: 'Square, landscape or portrait, at least 600px', detail: 'Use a bright, sharp product photo on a clean background.' };
 }
 
 function productOptionFields(profile) {
@@ -191,9 +191,14 @@ function currentProductCategoryProfile() {
 }
 
 function imageFitsProfile(width, height, profile) {
-  if (width < profile.minWidth || height < profile.minHeight) return false;
+  const minW = profile.minWidth || 400;
+  const minH = profile.minHeight || 400;
+  if (width < minW || height < minH) return false;
   const ratio = width / height;
-  return profile.ratios.some((expected) => Math.abs(ratio - expected) <= 0.015);
+  if (profile.ratios && profile.ratios.length > 0) {
+    if (profile.ratios.some((expected) => Math.abs(ratio - expected) <= 0.1)) return true;
+  }
+  return ratio >= 0.45 && ratio <= 2.2;
 }
 
 function imageDimensions(file) {
