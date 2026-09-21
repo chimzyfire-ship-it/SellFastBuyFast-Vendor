@@ -1577,11 +1577,11 @@ function renderCatalogueView() {
 
 function renderAddProductView() {
   const categoryOptions = state.categories.map((c) => `<option value="${escapeAttribute(c.id)}">${escapeHtml(c.name)}</option>`).join('');
-  const catalogueEnabled = state.overview?.merchant?.status === 'active';
-  const canCreate = catalogueEnabled && state.categories.length > 0;
   const isEditing = Boolean(state.editingProductId);
   const existingProduct = state.editingProductId ? state.products.find((p) => String(p.id) === String(state.editingProductId)) : null;
   const isRejected = existingProduct?.status === 'rejected';
+  const catalogueEnabled = (state.overview?.merchant?.status ?? state.merchant?.status) === 'active';
+  const canCreate = (catalogueEnabled && state.categories.length > 0) || isEditing || isRejected;
   const draft = state.productDraft || {};
   const rejectionReason = existingProduct?.rejectionReason || existingProduct?.rejection_reason || draft.rejectionReason || '';
 
@@ -1694,7 +1694,7 @@ function renderAddProductView() {
               "${escapeHtml(rejectionReason)}"
             </div>
             <p class="rejection-feedback-hint">
-              Please update the product specifications or photo according to the feedback above, then click <strong>Resubmit for Moderation</strong> below.
+              You may update the listing using the feedback above, or resubmit it unchanged for another Operations review. This note does not block <strong>Resubmit for Moderation</strong> below.
             </p>
           </div>
         ` : ''}
@@ -1717,8 +1717,8 @@ function renderAddProductView() {
             <div class="grid-2col">
               <div class="form-group">
               <label class="form-label" for="prod-category">Choose a category</label>
-                <select class="select" id="prod-category" name="categoryId" required ${canCreate ? '' : 'disabled'}>
-                  <option value="">Select Category</option>
+                <select class="select" id="prod-category" name="categoryId" required ${state.categories.length === 0 ? 'disabled' : ''}>
+                  <option value="">${state.categories.length === 0 ? 'Loading categories…' : 'Select Category'}</option>
                   ${state.categories.map((c) => `<option value="${escapeAttribute(c.id)}" ${c.id === categoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
                 </select>
               </div>
@@ -1983,7 +1983,7 @@ function renderAddProductView() {
 
             <div class="form-group">
               <label class="form-label" for="prod-desc">Product description</label>
-              <textarea class="textarea" id="prod-desc" name="description" placeholder="Example: Lightweight blue canvas sneakers with a cushioned insole. Best for everyday wear. Includes original box." style="min-height:110px;" required>${escapeHtml(description)}</textarea>
+              <textarea class="textarea" id="prod-desc" name="description" placeholder="Example: Lightweight blue canvas sneakers with a cushioned insole. Best for everyday wear. Includes original box." style="min-height:110px;">${escapeHtml(description)}</textarea>
               <span class="field-help">This appears below the image on the product page.</span>
             </div>
             <div class="form-group">
@@ -1994,14 +1994,14 @@ function renderAddProductView() {
 
             <div class="grid-2col">
               <div class="form-group">
-                <label class="form-label" for="prod-weight">Packed weight (kg)</label>
-                <input class="input" id="prod-weight" name="weightKg" type="number" step="0.05" min="0.1" placeholder="e.g. 0.85" value="${escapeAttribute(weightKg)}" required />
-                <span class="field-help">Used for GIGL / DHL automated courier rates.</span>
+                <label class="form-label" for="prod-weight">Packed weight (kg, optional)</label>
+                <input class="input" id="prod-weight" name="weightKg" type="number" step="any" placeholder="e.g. 0.85" value="${escapeAttribute(weightKg)}" />
+                <span class="field-help">Leave blank if unknown. Operations reviews the details before publication.</span>
               </div>
               <div class="form-group">
-                <label class="form-label" for="prod-dims">Packed size (L × W × H cm)</label>
-                <input class="input" id="prod-dims" name="dimensionsCm" placeholder="e.g. 33 × 21 × 12" value="${escapeAttribute(dimensionsCm)}" required />
-                <span class="field-help">Required for delivery pricing and visible to Operations during approval.</span>
+                <label class="form-label" for="prod-dims">Packed size (L × W × H cm, optional)</label>
+                <input class="input" id="prod-dims" name="dimensionsCm" placeholder="e.g. 33 × 21 × 12" value="${escapeAttribute(dimensionsCm)}" />
+                <span class="field-help">Submitted as entered for Operations to review.</span>
               </div>
             </div>
 
@@ -2083,11 +2083,11 @@ function renderAddProductView() {
                 </button>
               </div>
               <div style="display:flex;gap:10px;">
-                <button class="btn btn-secondary" type="button" data-action="save-as-draft" ${state.busy || state.isUploadingProductImage || !canCreate ? 'disabled' : ''}>
+                <button class="btn btn-secondary" type="button" data-action="save-as-draft" ${state.busy || state.isUploadingProductImage ? 'disabled' : ''}>
                   ${icon('file-text')} Save as Draft
                 </button>
-                <button class="btn btn-primary" type="submit" ${state.busy || state.isUploadingProductImage || !canCreate ? 'disabled' : ''}>
-                  ${state.busy === 'create-product' ? 'Saving…' : `${icon('send')} ${isRejected ? 'Resubmit for Moderation' : (isEditing ? 'Save Changes' : (submitForReview ? 'Submit for Review' : 'Save Product'))}`}
+                <button class="btn btn-primary" type="submit" ${state.busy || state.isUploadingProductImage ? 'disabled' : ''}>
+                  ${state.busy === 'create-product' || state.busy === 'update-product' ? 'Saving…' : `${icon('send')} ${isRejected ? 'Resubmit for Moderation' : (isEditing ? 'Save Changes' : (submitForReview ? 'Submit for Review' : 'Save Product'))}`}
                 </button>
               </div>
             </div>
@@ -3919,8 +3919,8 @@ function loadProductIntoStudio(prod, isFix = false) {
     variantMatrix: prod.variants || [],
     description: prod.description || '',
     imageUrl: media?.mediaUrl || '',
-    weightKg: prod.weightKg ? String(prod.weightKg) : '0.85',
-    dimensionsCm: prod.dimensionsCm || '33 × 21 × 12',
+    weightKg: prod.weightKg == null ? '' : String(prod.weightKg),
+    dimensionsCm: prod.dimensionsCm || '',
     returnPolicy: prod.returnPolicy || '7_day_escrow',
     warranty: prod.warranty || '30_days',
     submitForReview: true,
@@ -4981,6 +4981,10 @@ document.addEventListener('click', async (event) => {
 
   if (action === 'submit-product') {
     const productId = button.dataset.productId;
+    // This action belongs to an existing draft in the catalogue. The Product
+    // Studio submit control is a native form submit and intentionally has no
+    // product id until its create request has completed.
+    if (!productId) return;
     await performServerAction(`submit-product-${productId}`, async () => {
       await api(`/v1/catalog-management/products/${productId}/submit`, {
         method: 'POST',
@@ -5295,22 +5299,18 @@ async function uploadProductMediaImage(file) {
     showNotice(error.message, 'error');
     return;
   }
-  if (!imageFitsProfile(dimensions.width, dimensions.height, profile)) {
-    const message = `${file.name} is ${dimensions.width} × ${dimensions.height}px. ${profile.label} is required for this category.`;
-    const statusEl = document.getElementById('prod-image-upload-status');
-    state.productDraft ||= {};
-    state.productDraft.imageValidation = { valid: false, ...dimensions, profile: profile.key };
-    if (statusEl) {
-      statusEl.style.display = 'flex';
-      statusEl.innerHTML = `${icon('alert-circle')} <span style="color:var(--rose-600);font-weight:600;">${escapeHtml(message)}</span>`;
-    }
-    showNotice(message, 'error');
-    return;
-  }
-
   const merchantId = state.merchant.id;
   const draft = state.productDraft ||= {};
-  draft.imageValidation = { valid: true, ...dimensions, profile: profile.key };
+  const meetsGridRecommendation = imageFitsProfile(dimensions.width, dimensions.height, profile);
+  // Grid dimensions are guidance for the shopper experience, not a gate on
+  // moderation. Operations needs to see the vendor's original image before
+  // deciding whether it is suitable for the marketplace.
+  draft.imageValidation = {
+    valid: true,
+    meetsGridRecommendation,
+    ...dimensions,
+    profile: profile.key,
+  };
   const uploadBtn = document.querySelector('[data-action="trigger-product-image-upload"]');
   const uploadStatus = document.getElementById('prod-image-upload-status');
 
@@ -5371,9 +5371,13 @@ async function uploadProductMediaImage(file) {
 
     if (uploadStatus) {
       uploadStatus.style.display = 'flex';
-      uploadStatus.innerHTML = `${icon('check-circle')} <span style="color:var(--forest-900);font-weight:600;">${escapeHtml(file.name)} (${dimensions.width} × ${dimensions.height}px) meets the ${escapeHtml(profile.key)} image rules.</span>`;
+      uploadStatus.innerHTML = meetsGridRecommendation
+        ? `${icon('check-circle')} <span style="color:var(--forest-900);font-weight:600;">${escapeHtml(file.name)} (${dimensions.width} × ${dimensions.height}px) matches the shopper-grid guidance.</span>`
+        : `${icon('alert-triangle')} <span style="color:var(--gold-700);font-weight:600;">${escapeHtml(file.name)} is ${dimensions.width} × ${dimensions.height}px. Recommended for the customer app grid: ${escapeHtml(profile.label)}. It was uploaded and will be shown to Operations for review.</span>`;
     }
-    showNotice('Product image uploaded successfully!', 'success');
+    showNotice(meetsGridRecommendation
+      ? 'Product image uploaded successfully!'
+      : 'Product image uploaded. Its dimensions are outside the shopper-grid recommendation, so Operations will review it.', meetsGridRecommendation ? 'success' : 'warning');
   } catch (err) {
     console.error('Image upload failed:', err);
     if (uploadStatus) {
@@ -5777,6 +5781,7 @@ document.addEventListener('submit', async (event) => {
       ? configuredLowStockThreshold
       : 3;
     const description = form.elements.description.value.trim();
+    const careInstructions = form.elements.careInstructions?.value.trim() || '';
     const imageUrl = form.elements.imageUrl.value.trim();
     const bullet1 = form.elements.bullet1?.value.trim() || '';
     const bullet2 = form.elements.bullet2?.value.trim() || '';
@@ -5792,7 +5797,7 @@ document.addEventListener('submit', async (event) => {
     const priceMinor = Math.round(priceNaira * 100);
     const comparePriceMinor = comparePriceNaira > 0 ? Math.round(comparePriceNaira * 100) : undefined;
     const tagList = [...new Set(tags.split(',').map((tag) => tag.trim().toLowerCase()).filter(Boolean))];
-    const weightKgNumber = Number(weightKg);
+    const weightKgNumber = weightKg ? Number(weightKg) : null;
     const matrixRows = Array.from(form.querySelectorAll('#variant-matrix-tbody tr'));
     const variants = variantMode === 'variants'
       ? matrixRows.map((row) => {
@@ -5820,16 +5825,20 @@ document.addEventListener('submit', async (event) => {
           lowStockThreshold,
         }];
 
-    if (!title || !brand || !categoryId || !Number.isFinite(weightKgNumber) || weightKgNumber <= 0 || !dimensionsCm ||
-      !Number.isFinite(priceNaira) || !Number.isSafeInteger(priceMinor) || priceNaira <= 0 ||
-      !description || (imageUrl ? !isMediaUrlValid(imageUrl) : submitForReview) || variants.length === 0 || variants.some((variant) =>
-        !variant.sku || !Number.isSafeInteger(variant.priceMinor) || variant.priceMinor <= 0 ||
+    // Listing-quality checks above are guidance for Operations, not a second
+    // moderation gate in the browser. Keep only constraints needed to store a
+    // coherent draft safely; the item will remain invisible to shoppers until
+    // an Operations moderator approves it.
+    if (!title || !brand || (weightKgNumber !== null && (!Number.isFinite(weightKgNumber) || Math.abs(weightKgNumber) > 9999.99)) ||
+      !Number.isFinite(priceNaira) || !Number.isSafeInteger(priceMinor) || priceNaira < 0 ||
+      (imageUrl && !isMediaUrlValid(imageUrl)) || variants.length === 0 || variants.some((variant) =>
+        !Number.isSafeInteger(variant.priceMinor) || variant.priceMinor < 0 ||
         !Number.isSafeInteger(variant.availableQuantity) || variant.availableQuantity < 0
       )) {
-      if (imageUrl ? !isMediaUrlValid(imageUrl) : submitForReview) {
+      if (imageUrl && !isMediaUrlValid(imageUrl)) {
         state.formError = 'Please upload a product photo from your device or gallery, or provide a valid image URL.';
       } else {
-        state.formError = 'Please fill in all required product specification fields with valid data.';
+        state.formError = 'Please add a product name and use numeric price and whole-number stock values. Packed weight and size are optional for review.';
       }
       render();
       return;
@@ -5858,7 +5867,7 @@ document.addEventListener('submit', async (event) => {
             body: {
               title,
               description: formattedDescription,
-              categoryId,
+              categoryId: categoryId || null,
               brand,
               condition,
               comparePriceMinor: comparePriceMinor || null,
@@ -5930,7 +5939,7 @@ document.addEventListener('submit', async (event) => {
           method: 'POST',
           idempotencyScope: 'catalog-create',
           body: {
-            categoryId,
+            categoryId: categoryId || undefined,
             title,
             brand,
             condition,
