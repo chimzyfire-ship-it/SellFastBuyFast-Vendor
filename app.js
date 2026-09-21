@@ -11,7 +11,7 @@ const defaultFallbackConfig = {
   // A production browser must obtain its API location from Vercel's runtime
   // endpoint. Leaving this empty prevents a deployed portal from silently
   // attempting to call a developer's localhost server.
-  apiUrl: window.localStorage?.getItem('sfbf_api_url') || (isLocalDevelopmentHost ? 'http://localhost:4000' : ''),
+  apiUrl: window.localStorage?.getItem('sfbf_api_url') || (isLocalDevelopmentHost ? 'http://localhost:4000' : 'https://sell-fast-buy-fast-core-api.vercel.app'),
   supabaseUrl: window.localStorage?.getItem('sfbf_supabase_url') || 'https://fuqrhfxptybipxbzveyy.supabase.co',
   supabaseAnonKey: window.localStorage?.getItem('sfbf_supabase_anon_key') || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ1cXJoZnhwdHliaXB4Ynp2ZXl5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5NDY3MjYsImV4cCI6MjEwMzUyMjcyNn0.Q240FBpikqiWaGytkVP1RWVHGA-ZpvdVicY9qf4pvWw',
 };
@@ -45,11 +45,21 @@ const state = {
   modal: null,
   authMode: 'signin', // 'signin' | 'signup' | 'verify-otp' | 'recover' | 'onboarding'
   pendingEmail: '',
+  pendingPassword: '',
+  pendingFullName: '',
+  pendingBusinessName: '',
+  pendingPhone: '',
   authError: '',
   formError: '',
   productErrors: {},
   productDraft: null,
   notice: null,
+  notifications: [],
+  unreadNotificationsCount: 0,
+  notificationsOpen: false,
+  notificationsLoading: false,
+  notificationsChannel: null,
+  notificationsPollTimer: null,
   sidebarOpen: false,
   sidebarCollapsed: window.localStorage.getItem('sfbf-sidebar-collapsed') === 'true',
   showPassword: false,
@@ -149,6 +159,69 @@ function isMediaUrlValid(value) {
   return Boolean(safeUrl(trimmed));
 }
 
+function productCategoryProfile(categoryName = '') {
+  const category = categoryName.toLowerCase();
+  if (/fashion|clothing|footwear|shoe|apparel|jewell|bag/.test(category)) {
+    return { key: 'fashion', minWidth: 1200, minHeight: 1200, ratios: [1], label: 'Square (1:1), at least 1200 × 1200 px', detail: 'Show the full item on a clean background. Include every colour or size offered.' };
+  }
+  if (/electronic|phone|computer|appliance|tech/.test(category)) {
+    return { key: 'electronics', minWidth: 1200, minHeight: 900, ratios: [1, 4 / 3, 3 / 4], label: 'Square or 4:3, at least 1200 × 900 px', detail: 'Show the item powered on where useful, plus ports, model details and accessories.' };
+  }
+  if (/beauty|health|food|grocery/.test(category)) {
+    return { key: 'consumables', minWidth: 1200, minHeight: 1200, ratios: [1], label: 'Square (1:1), at least 1200 × 1200 px', detail: 'Keep the label, size and expiry information clearly readable.' };
+  }
+  return { key: 'standard', minWidth: 1200, minHeight: 1200, ratios: [1], label: 'Square (1:1), at least 1200 × 1200 px', detail: 'Use a bright, sharp product photo on a clean background.' };
+}
+
+function productOptionFields(profile) {
+  if (profile.key === 'fashion') return { primaryLabel: 'Sizes', primaryPrefix: 'EU ', primaryOptions: ['39', '40', '41', '42', '43', '44', '45'], secondaryLabel: 'Colours', secondaryOptions: ['Black', 'Brown', 'Navy', 'White', 'Tan'] };
+  if (profile.key === 'electronics') return { primaryLabel: 'Storage', primaryPrefix: '', primaryOptions: ['64 GB', '128 GB', '256 GB', '512 GB'], secondaryLabel: 'Colours', secondaryOptions: ['Black', 'Silver', 'Blue', 'Gold'] };
+  if (profile.key === 'consumables') return { primaryLabel: 'Size or volume', primaryPrefix: '', primaryOptions: ['50 ml', '100 ml', '200 ml', '500 ml'], secondaryLabel: 'Type', secondaryOptions: ['Standard', 'Value pack', 'Bundle'] };
+  return { primaryLabel: 'Option', primaryPrefix: '', primaryOptions: ['Small', 'Medium', 'Large'], secondaryLabel: 'Colour', secondaryOptions: ['Black', 'White', 'Blue', 'Other'] };
+}
+
+function productVariantLabel(primary, secondary, categoryName = '') {
+  const options = productOptionFields(productCategoryProfile(categoryName));
+  return `${options.primaryPrefix}${primary} / ${secondary}`;
+}
+
+function currentProductCategoryProfile() {
+  const select = document.getElementById('prod-category');
+  return productCategoryProfile(select?.options[select.selectedIndex]?.text || '');
+}
+
+function imageFitsProfile(width, height, profile) {
+  if (width < profile.minWidth || height < profile.minHeight) return false;
+  const ratio = width / height;
+  return profile.ratios.some((expected) => Math.abs(ratio - expected) <= 0.015);
+}
+
+function imageDimensions(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('The selected image could not be read.'));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function updateProductImageRequirements() {
+  const profile = currentProductCategoryProfile();
+  const longRule = document.getElementById('product-photo-rule');
+  const shortRule = document.getElementById('product-photo-rule-short');
+  const guidance = document.getElementById('product-photo-guidance');
+  if (longRule) longRule.textContent = profile.label;
+  if (shortRule) shortRule.textContent = profile.label;
+  if (guidance) guidance.textContent = profile.detail;
+}
+
 function safeMediaUrl(value) {
   if (!value || typeof value !== 'string') return '';
   const trimmed = value.trim();
@@ -174,19 +247,101 @@ function idempotencyKey(prefix) {
 }
 
 class ApiError extends Error {
-  constructor(message, code = 'REQUEST_FAILED') {
+  constructor(message, code = 'REQUEST_FAILED', status = 0) {
     super(message);
     this.code = code;
+    this.status = status;
   }
 }
 
+function isAuthError(error) {
+  if (!error) return false;
+  if (error.code === 'UNAUTHORIZED' || error.status === 401 ||
+      ['refresh_token_not_found', 'refresh_token_already_used', 'session_not_found', 'session_expired'].includes(error.code) ||
+      error.name === 'AuthSessionMissingError') return true;
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    msg.includes('token is invalid or expired') ||
+    msg.includes('session has expired') ||
+    msg.includes('session was revoked') ||
+    msg.includes('jwt') ||
+    msg.includes('unauthorized') ||
+    msg.includes('missing or malformed bearer token')
+  );
+}
+
+async function handleSessionExpired(message = 'Your session has expired. Please sign in again.') {
+  state.dataRequestVersion++;
+  workspaceGeneration++;
+  workspaceLoadingPromise = null;
+  state.dataAbortController?.abort();
+  state.dataAbortController = null;
+  if (state.client) {
+    try {
+      await state.client.auth.signOut({ scope: 'local' });
+    } catch (e) {
+      console.warn('Could not clear local session:', e);
+    }
+  }
+  state.session = null;
+  state.merchants = [];
+  state.merchant = null;
+  state.overview = null;
+  state.products = [];
+  state.orders = [];
+  state.returns = [];
+  state.team = [];
+  state.categories = [];
+  state.workspaceError = '';
+  state.partialDataError = '';
+  state.modal = null;
+  state.profileDraft = null;
+  state.verificationData = null;
+  state.pendingPassword = '';
+  state.busy = null;
+  state.loading = false;
+  state.authMode = 'signin';
+  state.authError = message;
+  render();
+}
+
+let sessionRefreshPromise = null;
+async function refreshSessionOnce(rejectedToken) {
+  if (sessionRefreshPromise) return sessionRefreshPromise;
+  sessionRefreshPromise = (async () => {
+    const current = await state.client.auth.getSession();
+    if (current.error) throw current.error;
+    // Another tab or request may already have replaced the rejected token.
+    if (current.data?.session?.access_token !== rejectedToken) {
+      return current.data?.session || null;
+    }
+    const { data, error } = await state.client.auth.refreshSession();
+    if (error) throw error;
+    return data?.session || null;
+  })().finally(() => { sessionRefreshPromise = null; });
+  return sessionRefreshPromise;
+}
+
+async function getValidSession() {
+  if (!state.client) return null;
+  // Supabase owns persistence and expiry; always read its current session.
+  const { data, error } = await state.client.auth.getSession();
+  if (error) throw error;
+  state.session = data?.session || null;
+  return state.session;
+}
+
 async function api(path, options = {}) {
-  const { method = 'GET', body, idempotencyScope, signal } = options;
-  if (!state.client) throw new ApiError('Authentication client not initialized.', 'AUTH_UNAVAILABLE');
-  
-  const { data: { session } } = await state.client.auth.getSession();
-  if (!session?.access_token) throw new ApiError('Your session has expired. Please sign in again.', 'UNAUTHORIZED');
-  state.session = session;
+  const { method = 'GET', body, idempotencyScope, signal, _retry = false } = options;
+  if (!state.client) throw new ApiError('Authentication client not initialized.', 'AUTH_UNAVAILABLE', 0);
+
+  const generation = workspaceGeneration;
+  const session = await getValidSession();
+  if (generation !== workspaceGeneration) throw new DOMException('Session changed', 'AbortError');
+  if (!session?.access_token) {
+    await handleSessionExpired('Your session has expired. Please sign in again.');
+    throw new ApiError('Your session has expired. Please sign in again.', 'UNAUTHORIZED', 401);
+  }
 
   const headers = { Authorization: `Bearer ${session.access_token}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -202,18 +357,40 @@ async function api(path, options = {}) {
     });
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
-    throw new ApiError('Backend service unreachable.', 'NETWORK_ERROR');
+    throw new ApiError('Backend service unreachable.', 'NETWORK_ERROR', 0);
   }
 
+  if (generation !== workspaceGeneration) throw new DOMException('Session changed', 'AbortError');
   let payload;
   try {
     payload = await response.json();
   } catch {
-    throw new ApiError('The server returned an unreadable response.', 'INVALID_RESPONSE');
+    throw new ApiError('The server returned an unreadable response.', 'INVALID_RESPONSE', response?.status || 0);
   }
 
   if (!response.ok || !payload?.success) {
-    throw new ApiError(payload?.error?.message ?? 'The operation could not be completed.', payload?.error?.code);
+    const errorCode = payload?.error?.code || (response.status === 401 ? 'UNAUTHORIZED' : 'REQUEST_FAILED');
+    const errorMessage = payload?.error?.message ?? 'The operation could not be completed.';
+    const apiErr = new ApiError(errorMessage, errorCode, response.status);
+
+    if (isAuthError(apiErr)) {
+      if (!_retry) {
+        let refreshed;
+        try {
+          refreshed = await refreshSessionOnce(session.access_token);
+        } catch (error) {
+          // Connectivity failures should remain retryable, not erase a login.
+          if (!isAuthError(error)) throw error;
+        }
+        if (refreshed?.access_token) {
+          state.session = refreshed;
+          return api(path, { ...options, _retry: true });
+        }
+      }
+      await handleSessionExpired();
+    }
+
+    throw apiErr;
   }
 
   return payload.data;
@@ -221,11 +398,24 @@ async function api(path, options = {}) {
 
 function showNotice(message, type = 'success') {
   state.notice = { message, type };
-  render();
+  let container = document.querySelector('.toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'toast-container';
+    container.setAttribute('aria-live', 'polite');
+    root.appendChild(container);
+  }
+  container.innerHTML = `
+    <div class="toast ${type === 'error' ? 'toast-error' : 'toast-success'}" role="status">
+      ${icon(type === 'error' ? 'alert-triangle' : 'check-circle')}
+      <span>${escapeHtml(message)}</span>
+    </div>`;
+  hydrateIcons();
   window.clearTimeout(showNotice.timer);
   showNotice.timer = window.setTimeout(() => {
     state.notice = null;
-    render();
+    const c = document.querySelector('.toast-container');
+    if (c) c.remove();
   }, 4500);
 }
 
@@ -252,7 +442,23 @@ function statusBadge(status) {
     iconName = 'alert-circle';
   }
 
-  return `<span class="status-pill ${pillClass}">${icon(iconName)} ${escapeHtml(norm)}</span>`;
+  const label = norm === 'rejected' ? 'Needs Changes' : norm;
+  return `<span class="status-pill ${pillClass}">${icon(iconName)} ${escapeHtml(label)}</span>`;
+}
+
+function formatRelativeTime(value) {
+  if (!value) return '—';
+  const diff = Date.now() - new Date(value).getTime();
+  if (isNaN(diff)) return '—';
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return 'Just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const days = Math.floor(hr / 24);
+  if (days < 7) return `${days}d ago`;
+  return formatDate(value);
 }
 
 /* ==========================================================================
@@ -309,11 +515,13 @@ function dismissSplash() {
   const splashEl = document.getElementById('app-splash');
   if (splashEl) {
     splashEl.classList.add('fade-out');
-  }
-  setTimeout(() => {
+    setTimeout(() => {
+      splashEl.remove();
+      state.splashActive = false;
+    }, 500);
+  } else {
     state.splashActive = false;
-    render();
-  }, 500);
+  }
 }
 
 /* ==========================================================================
@@ -422,7 +630,7 @@ function renderAuthHtml() {
             <label class="form-label" for="full-name">Full Name</label>
             <div class="input-wrapper">
               <span class="input-icon-left">${icon('user')}</span>
-              <input class="input has-icon-left" id="full-name" name="fullName" type="text" placeholder="e.g. Oluwaseun Adeleke" required />
+              <input class="input has-icon-left" id="full-name" name="fullName" type="text" placeholder="e.g. Oluwaseun Adeleke" value="${escapeAttribute(state.pendingFullName || '')}" required />
             </div>
           </div>
 
@@ -430,7 +638,7 @@ function renderAuthHtml() {
             <label class="form-label" for="business-name">Store / Brand Name</label>
             <div class="input-wrapper">
               <span class="input-icon-left">${icon('store')}</span>
-              <input class="input has-icon-left" id="business-name" name="businessName" type="text" placeholder="e.g. Lagos Luxury Attire" required />
+              <input class="input has-icon-left" id="business-name" name="businessName" type="text" placeholder="e.g. Lagos Luxury Attire" value="${escapeAttribute(state.pendingBusinessName || '')}" required />
             </div>
           </div>
         </div>
@@ -440,7 +648,7 @@ function renderAuthHtml() {
             <label class="form-label" for="email">Work Email</label>
             <div class="input-wrapper">
               <span class="input-icon-left">${icon('mail')}</span>
-              <input class="input has-icon-left" id="email" name="email" type="email" autocomplete="email" placeholder="vendor@business.ng" required />
+              <input class="input has-icon-left" id="email" name="email" type="email" autocomplete="email" placeholder="vendor@business.ng" value="${escapeAttribute(state.pendingEmail || '')}" required />
             </div>
           </div>
 
@@ -448,7 +656,7 @@ function renderAuthHtml() {
             <label class="form-label" for="phone">Phone Number (+234)</label>
             <div class="input-wrapper">
               <span class="input-icon-left">${icon('phone')}</span>
-              <input class="input has-icon-left" id="phone" name="phone" type="tel" placeholder="08012345678" required />
+              <input class="input has-icon-left" id="phone" name="phone" type="tel" placeholder="08012345678" value="${escapeAttribute(state.pendingPhone || '')}" required />
             </div>
           </div>
         </div>
@@ -457,8 +665,8 @@ function renderAuthHtml() {
           <label class="form-label" for="password">Create Password</label>
           <div class="input-wrapper">
             <span class="input-icon-left">${icon('lock')}</span>
-            <input class="input has-icon-left has-icon-right" id="password" name="password" type="${state.showPassword ? 'text' : 'password'}" required placeholder="Min. 8 characters" />
-            <button type="button" class="input-icon-right-btn" data-action="toggle-password" aria-label="Toggle password visibility">${icon(state.showPassword ? 'eye-off' : 'eye')}</button>
+            <input class="input has-icon-left has-icon-right" id="password" name="password" type="${state.showPassword ? 'text' : 'password'}" value="${escapeAttribute(state.pendingPassword || '')}" required placeholder="Min. 8 characters" />
+            <button type="button" class="input-icon-right-btn" data-action="toggle-password" aria-label="${state.showPassword ? 'Hide password' : 'Show password'}" title="${state.showPassword ? 'Hide password' : 'Show password'}">${icon(state.showPassword ? 'eye-off' : 'eye')}</button>
           </div>
         </div>
 
@@ -487,7 +695,7 @@ function renderAuthHtml() {
           <label class="form-label" for="email">Account Email</label>
           <div class="input-wrapper">
             <span class="input-icon-left">${icon('mail')}</span>
-            <input class="input has-icon-left" id="email" name="email" type="email" autocomplete="email" placeholder="vendor@business.ng" required />
+            <input class="input has-icon-left" id="email" name="email" type="email" autocomplete="email" placeholder="vendor@business.ng" value="${escapeAttribute(state.pendingEmail || '')}" required />
           </div>
         </div>
 
@@ -528,8 +736,8 @@ function renderAuthHtml() {
           </div>
           <div class="input-wrapper">
             <span class="input-icon-left">${icon('lock')}</span>
-            <input class="input has-icon-left has-icon-right" id="password" name="password" type="${state.showPassword ? 'text' : 'password'}" autocomplete="current-password" placeholder="••••••••" required />
-            <button type="button" class="input-icon-right-btn" data-action="toggle-password" aria-label="Toggle password visibility">${icon(state.showPassword ? 'eye-off' : 'eye')}</button>
+            <input class="input has-icon-left has-icon-right" id="password" name="password" type="${state.showPassword ? 'text' : 'password'}" autocomplete="current-password" placeholder="••••••••" value="${escapeAttribute(state.pendingPassword || '')}" required />
+            <button type="button" class="input-icon-right-btn" data-action="toggle-password" aria-label="${state.showPassword ? 'Hide password' : 'Show password'}" title="${state.showPassword ? 'Hide password' : 'Show password'}">${icon(state.showPassword ? 'eye-off' : 'eye')}</button>
           </div>
         </div>
 
@@ -718,6 +926,66 @@ function navItem(view, iconName, label, badgeCount, badgeType = 'default') {
     </button>`;
 }
 
+function renderNotificationsDropdown() {
+  const notifs = state.notifications || [];
+  const unreadCount = state.unreadNotificationsCount || 0;
+
+  return `
+    <div class="notifications-dropdown-menu" role="dialog" aria-label="Notifications">
+      <div class="notifications-header">
+        <div class="notifications-header-title">
+          <strong>Notifications</strong>
+          ${unreadCount > 0 ? `<span class="notification-count-badge">${unreadCount} new</span>` : ''}
+        </div>
+        ${unreadCount > 0 ? `
+          <button class="btn-quiet btn-sm mark-read-btn" type="button" data-action="mark-all-notifications-read">
+            ${icon('check-check')} Mark all read
+          </button>
+        ` : ''}
+      </div>
+      <div class="notifications-list">
+        ${notifs.length ? notifs.map((n) => {
+          const isUnread = !n.readAt;
+          const isRejected = n.type === 'catalog_product_rejected';
+          const isPublished = n.type === 'catalog_product_published';
+          const productId = n.data?.productId;
+          const iconName = isRejected ? 'alert-triangle' : isPublished ? 'check-circle' : 'bell';
+          const iconColorClass = isRejected ? 'notif-icon-danger' : isPublished ? 'notif-icon-success' : 'notif-icon-info';
+
+          return `
+            <div class="notification-item ${isUnread ? 'unread' : ''} ${isRejected ? 'rejection-item' : ''}" data-action="read-notification" data-id="${escapeAttribute(n.id)}">
+              <div class="notification-icon-wrap ${iconColorClass}">
+                ${icon(iconName)}
+              </div>
+              <div class="notification-content">
+                <div class="notification-title-row">
+                  <strong class="notification-title">${escapeHtml(n.title || 'Notification')}</strong>
+                  <span class="notification-time">${formatRelativeTime(n.createdAt)}</span>
+                </div>
+                <p class="notification-body">${escapeHtml(n.body || '')}</p>
+                ${(isRejected && productId) ? `
+                  <div class="notification-action-row">
+                    <button class="btn btn-warning btn-sm" type="button" data-action="fix-and-resubmit" data-product-id="${escapeAttribute(productId)}">
+                      ${icon('refresh-cw')} Fix & Resubmit Listing
+                    </button>
+                  </div>
+                ` : ''}
+              </div>
+              ${isUnread ? '<span class="unread-dot" title="Unread"></span>' : ''}
+            </div>
+          `;
+        }).join('') : `
+          <div class="notifications-empty">
+            <div class="empty-icon">${icon('bell-off')}</div>
+            <p>No notifications yet</p>
+            <small class="muted">You'll receive live alerts when Operations reviews your products or updates occur.</small>
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
 function renderShellHtml() {
   const overview = state.overview;
   const pendingFulfil = (overview?.fulfilment?.awaitingAcceptance ?? 0) + (overview?.fulfilment?.awaitingPacking ?? 0);
@@ -725,6 +993,9 @@ function renderShellHtml() {
   const verification = overview?.verification?.status ?? 'pending';
   const catalogueEnabled = (overview?.merchant?.status ?? state.merchant?.status) === 'active';
   const lowStockCount = state.products.filter((p) => (p.variants?.[0]?.availableQuantity ?? 0) <= 3).length;
+  const rejectedCount = state.products.filter((p) => p.status === 'rejected').length;
+  const catalogueBadge = rejectedCount > 0 ? `${rejectedCount} action` : (lowStockCount > 0 ? lowStockCount : undefined);
+  const catalogueBadgeType = rejectedCount > 0 ? 'warn' : (lowStockCount > 0 ? 'warn' : undefined);
 
   return `
     <div class="portal-shell">
@@ -748,7 +1019,7 @@ function renderShellHtml() {
             ${navItem('returns', 'rotate-ccw', 'Returns & Disputes', pendingReturns)}
 
             <div class="nav-section-label">Commerce</div>
-            ${navItem('catalogue', 'package', 'Catalogue & Stock', lowStockCount > 0 ? lowStockCount : undefined, 'warn')}
+            ${navItem('catalogue', 'package', 'Catalogue & Stock', catalogueBadge, catalogueBadgeType)}
             ${navItem('add-product', 'plus-circle', 'Product Studio')}
 
             <div class="nav-section-label">Finance & Settings</div>
@@ -793,6 +1064,15 @@ function renderShellHtml() {
             <button class="btn btn-quiet btn-sm" type="button" data-action="refresh-current" title="Refresh store data">
               ${icon('refresh-cw')} <span class="hide-mobile">Refresh</span>
             </button>
+            <div class="topbar-divider"></div>
+            <!-- Notification Bell with Unread Badge & Dropdown -->
+            <div class="notifications-dropdown-wrap">
+              <button class="btn btn-quiet btn-sm notification-bell-btn ${state.unreadNotificationsCount > 0 ? 'has-unread' : ''}" type="button" data-action="toggle-notifications" title="Notifications (${state.unreadNotificationsCount} unread)">
+                ${icon('bell')}
+                ${state.unreadNotificationsCount > 0 ? `<span class="notification-badge">${state.unreadNotificationsCount > 99 ? '99+' : state.unreadNotificationsCount}</span>` : ''}
+              </button>
+              ${state.notificationsOpen ? renderNotificationsDropdown() : ''}
+            </div>
             <div class="topbar-divider"></div>
             ${statusBadge(verification)}
             <button class="btn btn-primary btn-sm" type="button" data-action="new-product" ${catalogueEnabled ? '' : 'disabled'}>
@@ -987,6 +1267,7 @@ function renderCatalogueView() {
   const totalCount = state.products.length;
   const publishedCount = state.products.filter((p) => p.status === 'published').length;
   const inReviewCount = state.products.filter((p) => p.status === 'pending_approval').length;
+  const rejectedCount = state.products.filter((p) => p.status === 'rejected').length;
   const draftCount = state.products.filter((p) => p.status === 'draft').length;
   const lowStockCount = state.products.filter((p) => (p.variants?.[0]?.availableQuantity ?? 0) <= 3).length;
   const totalUnits = state.products.reduce((s, p) => s + (p.variants?.[0]?.availableQuantity ?? 0), 0);
@@ -994,6 +1275,7 @@ function renderCatalogueView() {
   let filtered = [...state.products];
   if (currentFilter === 'published') filtered = filtered.filter((p) => p.status === 'published');
   else if (currentFilter === 'in_review') filtered = filtered.filter((p) => p.status === 'pending_approval');
+  else if (currentFilter === 'rejected') filtered = filtered.filter((p) => p.status === 'rejected');
   else if (currentFilter === 'draft') filtered = filtered.filter((p) => p.status === 'draft');
   else if (currentFilter === 'low-stock') filtered = filtered.filter((p) => (p.variants?.[0]?.availableQuantity ?? 0) <= 3);
 
@@ -1059,6 +1341,11 @@ function renderCatalogueView() {
                 <span class="table-sku-badge">SKU: ${escapeHtml(variant?.sku || 'No SKU')}</span>
                 ${product.variants && product.variants.length > 1 ? `<span style="font-size:11px;color:var(--forest-800);font-weight:700;">${product.variants.length} variants</span>` : ''}
               </div>
+              ${product.status === 'rejected' && product.rejectionReason ? `
+                <div class="product-rejection-callout" data-action="fix-and-resubmit" data-product-id="${escapeAttribute(product.id)}" title="Click to fix and resubmit">
+                  ${icon('alert-triangle')} <strong>Operations Feedback:</strong> "${escapeHtml(product.rejectionReason)}"
+                </div>
+              ` : ''}
             </div>
           </div>
         </td>
@@ -1088,6 +1375,11 @@ function renderCatalogueView() {
                 ${icon('sliders')} Stock
               </button>
             ` : ''}
+            ${product.status === 'rejected' ? `
+              <button class="btn btn-warning btn-sm" type="button" data-action="fix-and-resubmit" data-product-id="${escapeAttribute(product.id)}" title="Review feedback and resubmit listing for moderation">
+                ${icon('refresh-cw')} Fix & Resubmit
+              </button>
+            ` : ''}
             <button class="btn btn-secondary btn-sm" type="button" data-action="edit-product" data-product-id="${escapeAttribute(product.id)}" title="Edit in Product Studio">
               ${icon('edit-3')} Edit
             </button>
@@ -1101,11 +1393,7 @@ function renderCatalogueView() {
               <button class="btn btn-primary btn-sm" type="button" data-action="submit-product" data-product-id="${escapeAttribute(product.id)}" ${catalogueEnabled ? '' : 'disabled'} title="Submit for Operations moderation">
                 ${icon('send')} Submit
               </button>
-            ` : `
-              <button class="btn btn-quiet btn-sm" type="button" data-action="toggle-product-status" data-product-id="${escapeAttribute(product.id)}" title="${product.status === 'published' ? 'Pause listing (unpublish)' : 'Republish listing live'}">
-                ${icon(product.status === 'published' ? 'pause-circle' : 'play-circle')}
-              </button>
-            `}
+            ` : ''}
             <button class="btn btn-quiet btn-sm danger-hover" type="button" data-action="delete-product" data-product-id="${escapeAttribute(product.id)}" title="Delete item">
               ${icon('trash-2')}
             </button>
@@ -1143,6 +1431,15 @@ function renderCatalogueView() {
           <div class="catalogue-kpi-label">Units in Stock</div>
         </div>
       </div>
+      ${rejectedCount > 0 ? `
+        <div class="catalogue-kpi-card ${currentFilter === 'rejected' ? 'active' : ''}" data-action="set-catalogue-filter" data-filter="rejected" title="Filter items requiring correction before publication" style="border-color:var(--rose-300);background:#fff9f9;">
+          <div class="catalogue-kpi-icon warn" style="color:var(--rose-600);background:var(--rose-50);">${icon('alert-triangle')}</div>
+          <div class="catalogue-kpi-content">
+            <div class="catalogue-kpi-val" style="color:var(--rose-600);">${rejectedCount}</div>
+            <div class="catalogue-kpi-label" style="color:var(--rose-700);font-weight:700;">Needs Changes</div>
+          </div>
+        </div>
+      ` : ''}
       <div class="catalogue-kpi-card ${currentFilter === 'low-stock' ? 'active' : ''}" data-action="set-catalogue-filter" data-filter="low-stock" title="Filter items low in stock (≤ 3 units)">
         <div class="catalogue-kpi-icon ${lowStockCount > 0 ? 'warn' : ''}">${icon('alert-triangle')}</div>
         <div class="catalogue-kpi-content">
@@ -1168,6 +1465,11 @@ function renderCatalogueView() {
         <button class="filter-pill ${currentFilter === 'published' ? 'active' : ''}" type="button" data-action="set-catalogue-filter" data-filter="published">
           Published <span class="filter-count">${publishedCount}</span>
         </button>
+        ${rejectedCount > 0 ? `
+          <button class="filter-pill ${currentFilter === 'rejected' ? 'active' : ''}" type="button" data-action="set-catalogue-filter" data-filter="rejected" style="border-color:var(--rose-600);color:var(--rose-700);">
+            Needs Changes <span class="filter-count danger">${rejectedCount}</span>
+          </button>
+        ` : ''}
         <button class="filter-pill ${currentFilter === 'low-stock' ? 'active' : ''}" type="button" data-action="set-catalogue-filter" data-filter="low-stock">
           Low Stock <span class="filter-count ${lowStockCount > 0 ? 'warn' : ''}">${lowStockCount}</span>
         </button>
@@ -1273,46 +1575,51 @@ function renderAddProductView() {
   const catalogueEnabled = state.overview?.merchant?.status === 'active';
   const canCreate = catalogueEnabled && state.categories.length > 0;
   const isEditing = Boolean(state.editingProductId);
+  const existingProduct = state.editingProductId ? state.products.find((p) => String(p.id) === String(state.editingProductId)) : null;
+  const isRejected = existingProduct?.status === 'rejected';
   const draft = state.productDraft || {};
+  const rejectionReason = existingProduct?.rejectionReason || existingProduct?.rejection_reason || draft.rejectionReason || '';
 
   // Form values (default or editing)
   const title = draft.title || '';
   const categoryId = draft.categoryId || '';
-  const brand = draft.brand || 'SellFast Signature';
+  const brand = draft.brand || '';
   const condition = draft.condition || 'brand_new';
-  const tags = draft.tags || 'mens footwear, formal, genuine leather';
-  const sku = draft.sku || (isEditing ? '' : `SFBF-SKU-${Math.floor(1000 + Math.random() * 9000)}`);
-  const priceNaira = draft.priceNaira || '45000';
-  const comparePriceNaira = draft.comparePriceNaira || '55000';
-  const availableQuantity = draft.availableQuantity || '15';
+  const tags = draft.tags || '';
+  const description = draft.description || '';
+  const sku = draft.sku || '';
+  const priceNaira = draft.priceNaira || '';
+  const comparePriceNaira = draft.comparePriceNaira || '';
+  const availableQuantity = draft.availableQuantity || '';
   const lowStockThreshold = draft.lowStockThreshold || '3';
   const variantMode = draft.variantMode || 'single'; // 'single' | 'variants'
-  const selectedSizes = Array.isArray(draft.selectedSizes) && draft.selectedSizes.length > 0 ? draft.selectedSizes : ['40', '41', '42', '43', '44'];
-  const selectedColors = Array.isArray(draft.selectedColors) && draft.selectedColors.length > 0 ? draft.selectedColors : ['Black'];
+  const selectedSizes = Array.isArray(draft.selectedSizes) ? draft.selectedSizes : [];
+  const selectedColors = Array.isArray(draft.selectedColors) ? draft.selectedColors : [];
   const matrixOptions = selectedSizes.flatMap((size) => selectedColors.map((color) => ({ size, color }))).slice(0, 100);
   const matrixVariantByOption = new Map((draft.variantMatrix || []).map((variant) => [
     `${variant.optionSize || ''}:${variant.optionColor || ''}`,
     variant,
   ]));
-  const bullet1 = draft.bullet1 || '100% Genuine Handcrafted Italian Calfskin Leather';
-  const bullet2 = draft.bullet2 || 'Cushioned Memory Foam Insole with Anti-Skid Rubber Sole';
-  const bullet3 = draft.bullet3 || 'Reinforced Goodyear Welted Construction for Longevity';
-  const description = draft.description || 'Expertly handcrafted from supple, premium full-grain leather, these Oxford shoes combine timeless elegance with day-long comfort. Designed for formal engagements, executive wear, and high-profile events.';
-  const imageUrl = draft.imageUrl || 'assets/product-sneakers-arch.jpg';
-  const weightKg = draft.weightKg || '0.85';
-  const dimensionsCm = draft.dimensionsCm || '33 × 21 × 12';
+  const bullet1 = draft.bullet1 || '';
+  const bullet2 = draft.bullet2 || '';
+  const bullet3 = draft.bullet3 || '';
+  const careInstructions = draft.careInstructions || '';
+  const imageUrl = draft.imageUrl || '';
+  const weightKg = draft.weightKg || '';
+  const dimensionsCm = draft.dimensionsCm || '';
   const returnPolicy = draft.returnPolicy || '7_day_escrow';
   const warranty = draft.warranty || '30_days';
-  const submitForReview = draft.submitForReview !== false;
+  const submitForReview = isRejected ? true : (draft.submitForReview !== false);
   const previewMode = state.previewMode || 'card'; // 'card' | 'detail'
 
   // Live preview computations
-  const previewImg = safeMediaUrl(imageUrl) || 'assets/product-sneakers-arch.jpg';
-  const previewTitle = title || 'Italian Leather Men\'s Oxford Shoes';
-  const previewBrand = brand || 'SellFast Signature';
-  const selectedCat = state.categories.find((c) => c.id === categoryId)?.name || 'Footwear & Fashion';
-  const previewPriceNum = Number(priceNaira) || 45000;
-  const previewPrice = formatNaira(previewPriceNum * 100);
+  const previewImg = safeMediaUrl(imageUrl);
+  const hasImage = Boolean(previewImg);
+  const previewTitle = title || 'Your product name';
+  const previewBrand = brand || 'Your brand';
+  const selectedCat = state.categories.find((c) => c.id === categoryId)?.name || 'Category';
+  const previewPriceNum = Number(priceNaira) || 0;
+  const previewPrice = previewPriceNum ? formatNaira(previewPriceNum * 100) : 'Add a price';
   const previewCompareNum = Number(comparePriceNaira) || 0;
   const previewCompare = previewCompareNum > 0 ? formatNaira(previewCompareNum * 100) : '';
   const discountPercent = (previewCompareNum > previewPriceNum && previewPriceNum > 0)
@@ -1333,26 +1640,26 @@ function renderAddProductView() {
   // Quality score & readiness checklist
   const checkTitle = title.trim().length >= 10;
   const checkCategory = Boolean(categoryId);
-  const checkImage = isMediaUrlValid(imageUrl);
+  const checkImage = isMediaUrlValid(imageUrl) && draft.imageValidation?.valid !== false;
   const checkPrice = previewPriceNum > 0;
   const checkStock = qtyNum > 0;
   const checkDesc = description.trim().length >= 20 || (bullet1 && bullet2);
-  const checksPassed = [checkTitle, checkCategory, checkImage, checkPrice, checkStock, checkDesc].filter(Boolean).length;
-  const qualityScore = Math.round((checksPassed / 6) * 100);
+  const checkShipping = Boolean(weightKg && dimensionsCm);
+  const checksPassed = [checkTitle, checkCategory, checkImage, checkPrice, checkStock, checkDesc, checkShipping].filter(Boolean).length;
+  const qualityScore = Math.round((checksPassed / 7) * 100);
 
-  // Available size & color options
-  const footwearSizes = ['39', '40', '41', '42', '43', '44', '45'];
-  const popularColors = ['Black', 'Brown', 'Navy', 'White', 'Tan'];
+  const categoryProfile = productCategoryProfile(state.categories.find((c) => c.id === categoryId)?.name || '');
+  const variantFields = productOptionFields(categoryProfile);
 
   return `
     <div class="view-header">
       <div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
           <span class="status-pill status-pill-success" style="font-size:11px;">${icon('layers')} Pro Marketplace Studio</span>
-          ${isEditing ? `<span class="status-pill status-pill-warning" style="font-size:11px;">${icon('edit-3')} Edit Mode</span>` : ''}
+          ${isRejected ? `<span class="status-pill status-pill-danger" style="font-size:11px;">${icon('alert-triangle')} Needs Changes</span>` : (isEditing ? `<span class="status-pill status-pill-warning" style="font-size:11px;">${icon('edit-3')} Edit Mode</span>` : '')}
         </div>
-        <h1 class="view-title">${isEditing ? 'Edit Product Listing' : 'Product Studio'}</h1>
-        <p class="view-subtitle">${isEditing ? 'Update specifications, pricing, media, or variant stock for this catalog listing.' : 'Create, refine, and publish enterprise-grade listings to the live SellFastBuyFast marketplace.'}</p>
+        <h1 class="view-title">${isRejected ? 'Fix & Resubmit Product' : (isEditing ? 'Edit Product Listing' : 'Product Studio')}</h1>
+        <p class="view-subtitle">${isRejected ? 'Address Operations moderation feedback below and resubmit your listing for marketplace approval.' : (isEditing ? 'Update specifications, pricing, media, or variant stock for this catalog listing.' : 'Create, refine, and publish enterprise-grade listings to the live SellFastBuyFast marketplace.')}</p>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         ${isEditing ? `
@@ -1373,16 +1680,30 @@ function renderAddProductView() {
       <form id="product-form" novalidate style="display:flex;flex-direction:column;gap:0;">
         ${state.formError ? `<div class="error-summary" role="alert" style="margin-bottom:18px;">${icon('alert-circle')} <span>${escapeHtml(state.formError)}</span></div>` : ''}
 
-        <!-- Section 1: General Identity & Taxonomy -->
+        ${isRejected && rejectionReason ? `
+          <div class="rejection-feedback-banner" role="alert" style="margin-bottom:20px;">
+            <div class="rejection-feedback-title">
+              ${icon('alert-triangle')} Changes Requested by Operations Moderation
+            </div>
+            <div class="rejection-feedback-note">
+              "${escapeHtml(rejectionReason)}"
+            </div>
+            <p class="rejection-feedback-hint">
+              Please update the product specifications or photo according to the feedback above, then click <strong>Resubmit for Moderation</strong> below.
+            </p>
+          </div>
+        ` : ''}
+
+        <!-- Section 1: The essentials -->
         <div class="studio-section">
           <div class="studio-section-header">
-            <div class="studio-section-title">${icon('file-text')} General Identity & Taxonomy</div>
+            <div class="studio-section-title">${icon('file-text')} About your item</div>
             <span class="studio-section-badge">Required</span>
           </div>
           <div class="studio-section-body">
             <div class="form-group">
               <label class="form-label" for="prod-title">
-                <span>Product Title</span>
+                <span>What are you selling?</span>
                 <span class="field-help"><span id="title-char-count">${title.length}</span>/180 (30–80 recommended)</span>
               </label>
               <input class="input" id="prod-title" name="title" placeholder="e.g. Italian Leather Men's Oxford Shoes" value="${escapeAttribute(title)}" maxlength="180" required />
@@ -1390,19 +1711,21 @@ function renderAddProductView() {
 
             <div class="grid-2col">
               <div class="form-group">
-                <label class="form-label" for="prod-category">Marketplace Category</label>
+              <label class="form-label" for="prod-category">Choose a category</label>
                 <select class="select" id="prod-category" name="categoryId" required ${canCreate ? '' : 'disabled'}>
                   <option value="">Select Category</option>
                   ${state.categories.map((c) => `<option value="${escapeAttribute(c.id)}" ${c.id === categoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
                 </select>
               </div>
               <div class="form-group">
-                <label class="form-label" for="prod-brand">Brand / Designer</label>
+                <label class="form-label" for="prod-brand">Brand</label>
                 <input class="input" id="prod-brand" name="brand" placeholder="e.g. SellFast Signature, Nike, Zara" value="${escapeAttribute(brand)}" required />
               </div>
             </div>
 
-            <div class="grid-2col">
+            <details class="studio-advanced-fields">
+              <summary>More item details (optional)</summary>
+              <div class="grid-2col" style="margin-top:14px;">
               <div class="form-group">
                 <label class="form-label" for="prod-condition">Item Condition</label>
                 <select class="select" id="prod-condition" name="condition">
@@ -1412,10 +1735,11 @@ function renderAddProductView() {
                 </select>
               </div>
               <div class="form-group">
-                <label class="form-label" for="prod-tags">Search Tags & Keywords</label>
+                <label class="form-label" for="prod-tags">Search words</label>
                 <input class="input" id="prod-tags" name="tags" placeholder="e.g. leather, oxford, mens footwear, black" value="${escapeAttribute(tags)}" />
               </div>
-            </div>
+              </div>
+            </details>
           </div>
         </div>
 
@@ -1423,80 +1747,111 @@ function renderAddProductView() {
         <div class="studio-section">
           <div class="studio-section-header">
             <div class="studio-section-title">${icon('image')} Visual Media & Photography</div>
-            <span class="studio-section-badge">1:1 Square Standard</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button type="button" class="btn btn-quiet btn-xs" data-action="open-photo-standards" style="font-weight:600;color:var(--forest-800);display:inline-flex;align-items:center;gap:5px;">
+                ${icon('info')} View Full Image Standards
+              </button>
+              <span class="studio-section-badge" id="product-photo-rule">${escapeHtml(productCategoryProfile(state.categories.find((c) => c.id === categoryId)?.name || '').label)}</span>
+            </div>
           </div>
           <div class="studio-section-body">
-            <div class="form-group">
-              <label class="form-label" for="prod-image">Primary Cover Photo URL</label>
-              <input class="input" id="prod-image" name="imageUrl" type="url" placeholder="https://your-image-host.example/photo.jpg" value="${escapeAttribute(imageUrl)}" required />
-              <div class="image-preset-pills">
-                <span style="font-size:11.5px;color:var(--ink-muted);margin-right:2px;">Quick Presets:</span>
-                <button type="button" class="image-preset-pill" data-action="use-sample-image" data-title="Italian Leather Men's Oxford Shoes" data-brand="SellFast Signature" data-url="assets/product-sneakers-arch.jpg" data-price="45000" data-compare="55000">Men's Shoes</button>
-                <button type="button" class="image-preset-pill" data-action="use-sample-image" data-title="Luxury Leather Structured Handbag" data-brand="Milano Leather" data-url="assets/product-handbag-arch.jpg" data-price="68000" data-compare="85000">Leather Handbag</button>
-                <button type="button" class="image-preset-pill" data-action="use-sample-image" data-title="Stainless Steel Chrono Smartwatch" data-brand="Apex Tech" data-url="assets/product-smartwatch-arch.jpg" data-price="32000" data-compare="40000">Smartwatch</button>
-                <button type="button" class="image-preset-pill" data-action="use-sample-image" data-title="Artisan French Eau De Parfum 100ml" data-brand="Maison Paris" data-url="assets/product-perfume-arch.jpg" data-price="28000" data-compare="35000">Perfume</button>
-              </div>
-            </div>
+            <div class="product-upload-container">
+              <!-- Native hidden file input for photo gallery / camera / file selector -->
+              <input type="file" id="prod-image-file" accept="image/jpeg,image/png,image/webp" style="display:none;" />
 
-            <div style="display:flex;gap:14px;align-items:center;background:var(--page-subtle);padding:12px 14px;border-radius:var(--radius-sm);border:1px solid var(--border-light);">
-              <div style="width:64px;height:64px;border-radius:var(--radius-xs);border:1px solid var(--border-medium);overflow:hidden;flex-shrink:0;background:#ffffff;">
-                <img src="${escapeAttribute(previewImg)}" alt="Cover thumbnail" id="cover-thumb-preview" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='assets/product-sneakers-arch.jpg'" />
+              <!-- Drag and drop / click upload area -->
+              <div class="product-upload-dropzone" id="prod-image-dropzone" data-action="trigger-product-image-upload">
+                <div class="product-upload-icon-circle">
+                  ${icon('upload')}
+                </div>
+                <div class="product-upload-title">Select or Take Product Photo</div>
+                <div class="product-upload-subtitle">
+                  Upload directly from your phone photo gallery, camera, or computer files. Images must comply with <a href="javascript:void(0)" data-action="open-photo-standards" style="color:var(--forest-700);text-decoration:underline;font-weight:600;">Marketplace Photography Standards</a> to be approved by Operations Admins.
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" data-action="trigger-product-image-upload">
+                  ${icon('upload')} Choose Image from Device or Gallery
+                </button>
+                <div class="product-upload-badges">
+                  <span class="product-upload-badge highlight">Allowed Formats: JPG, PNG, WebP</span>
+                  <span class="product-upload-badge">Max: 5 MB</span>
+                  <span class="product-upload-badge" id="product-photo-rule-short">Category-aware image rules</span>
+                </div>
               </div>
-              <div style="font-size:12px;color:var(--ink-muted);line-height:1.45;">
-                <strong style="color:var(--ink-primary);display:block;margin-bottom:2px;">Marketplace Photography Standard</strong>
-                Use high-contrast product photos on clear neutral backgrounds. Listings with high-resolution imagery achieve 38% higher conversion rates and 50% fewer return disputes.
+
+              <!-- Upload Status / Progress -->
+              <div class="product-upload-status" id="prod-image-upload-status"></div>
+
+              <!-- Image Active Preview & Specs -->
+              <div class="photo-standards-banner">
+                <div class="photo-standards-thumb-wrap">
+                  <img src="${escapeAttribute(previewImg)}" alt="Uploaded product thumbnail" id="cover-thumb-preview" class="photo-standards-thumb" ${hasImage ? '' : 'hidden'} />
+                  <span class="photo-standards-thumb-empty" id="cover-thumb-empty" ${hasImage ? 'hidden' : ''}>${icon('image')}</span>
+                </div>
+                <div class="photo-standards-info">
+                  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+                    <strong style="color:var(--ink-primary);display:flex;align-items:center;gap:6px;font-size:13px;">
+                      ${icon('shield-check')} Marketplace Photography Standard
+                    </strong>
+                    <button type="button" class="btn btn-secondary btn-xs" data-action="open-photo-standards" style="display:inline-flex;align-items:center;gap:4px;font-weight:600;">
+                      ${icon('maximize')} Open Fullscreen Guide
+                    </button>
+                  </div>
+                  <p style="margin:4px 0 8px;font-size:12px;color:var(--ink-muted);line-height:1.45;" id="product-photo-guidance">
+                    Choose a category first. We will check the file dimensions and shape before upload.
+                  </p>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <button type="button" class="btn btn-quiet btn-xs" data-action="trigger-product-image-upload">
+                      ${icon('camera')} Change Photo
+                    </button>
+                    <button type="button" class="btn btn-quiet btn-xs" data-action="open-photo-standards">
+                      ${icon('book-open')} Read Guidelines & Examples
+                    </button>
+                  </div>
+                </div>
               </div>
+              <input id="prod-image" name="imageUrl" type="hidden" value="${escapeAttribute(imageUrl)}" />
             </div>
           </div>
         </div>
 
-        <!-- Section 3: Pricing, Profit & Escrow Settlement Intelligence -->
+        <!-- Section 3: Price and earnings -->
         <div class="studio-section">
           <div class="studio-section-header">
-            <div class="studio-section-title">${icon('credit-card')} Pricing, Profit & Escrow Settlement</div>
+            <div class="studio-section-title">${icon('credit-card')} Price & earnings</div>
             <span class="studio-section-badge">Naira (₦)</span>
           </div>
           <div class="studio-section-body">
             <div class="grid-2col">
               <div class="form-group">
-                <label class="form-label" for="prod-price">Retail Selling Price (₦ NGN)</label>
+                <label class="form-label" for="prod-price">Price customers pay (₦)</label>
                 <input class="input" id="prod-price" name="priceNaira" type="number" min="100" step="100" placeholder="e.g. 45000" value="${escapeAttribute(priceNaira)}" required />
                 <span class="field-help">Final price displayed to buyers in mobile app.</span>
               </div>
               <div class="form-group">
                 <label class="form-label" for="prod-compare-price">
-                  <span>Compare-at Original Price</span>
-                  <span class="field-help">Strike-through discount</span>
+                  <span>Previous price (optional)</span>
+                  <span class="field-help">Shows a sale when it is higher than your price</span>
                 </label>
                 <input class="input" id="prod-compare-price" name="comparePriceNaira" type="number" min="100" step="100" placeholder="e.g. 55000" value="${escapeAttribute(comparePriceNaira)}" />
                 <span class="field-help">Leave empty if not offering a promotional discount.</span>
               </div>
             </div>
 
-            <!-- Escrow Settlement & Profit Calculator Box -->
             <div class="payout-calculator-box">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
                 <span style="font-size:12px;font-weight:700;color:var(--forest-900);display:flex;align-items:center;gap:6px;">
-                  ${icon('calculator')} Escrow Net Payout Estimator
+                  ${icon('calculator')} Estimated amount you receive
                 </span>
-                <span style="font-size:11px;font-weight:600;color:var(--ink-muted);">Standard 5% Escrow Fee</span>
+                <span style="font-size:11px;font-weight:600;color:var(--ink-muted);">After the 5% marketplace fee</span>
               </div>
               <div class="payout-calc-grid">
                 <div class="payout-calc-item">
-                  <span class="payout-calc-val" id="calc-customer-val">${previewPrice}</span>
-                  <span class="payout-calc-label">Customer Pays</span>
-                </div>
-                <div class="payout-calc-item">
-                  <span class="payout-calc-val fee" id="calc-fee-val">-${platformFeeText}</span>
-                  <span class="payout-calc-label">Platform Escrow (5%)</span>
-                </div>
-                <div class="payout-calc-item">
                   <span class="payout-calc-val profit" id="calc-payout-val">${estimatedPayoutText}</span>
-                  <span class="payout-calc-label">Your Net Payout</span>
+                  <span class="payout-calc-label">Per item sold</span>
                 </div>
               </div>
               <div style="font-size:11px;color:var(--ink-muted);margin-top:10px;text-align:center;border-top:1px dashed rgba(10,82,67,0.15);padding-top:8px;display:flex;align-items:center;justify-content:center;gap:6px;">
-                ${icon('shield-check')} Funds held securely in escrow until buyer receives delivery and the 7-day return inspection window passes.
+                ${icon('shield-check')} Payment is released after confirmed delivery and the return window.
               </div>
             </div>
           </div>
@@ -1505,17 +1860,17 @@ function renderAddProductView() {
         <!-- Section 4: Multi-Variant Matrix & Inventory Controls -->
         <div class="studio-section">
           <div class="studio-section-header">
-            <div class="studio-section-title">${icon('package')} Variants & Stock Inventory</div>
-            <span class="studio-section-badge">Real-Time Sync</span>
+            <div class="studio-section-title">${icon('package')} Stock & options</div>
+            <span class="studio-section-badge">Required</span>
           </div>
           <div class="studio-section-body">
             <!-- Mode Toggle Tabs -->
             <div class="variant-type-tabs">
               <button type="button" class="variant-type-tab ${variantMode === 'single' ? 'active' : ''}" data-action="set-variant-mode" data-mode="single">
-                ${icon('box')} Single Product
+                ${icon('box')} One option
               </button>
               <button type="button" class="variant-type-tab ${variantMode === 'variants' ? 'active' : ''}" data-action="set-variant-mode" data-mode="variants">
-                ${icon('grid')} Multi-Variant Matrix (Sizes/Colors)
+                ${icon('grid')} Sizes or colours
               </button>
             </div>
 
@@ -1523,11 +1878,12 @@ function renderAddProductView() {
             <div id="single-inventory-box" style="display:${variantMode === 'single' ? 'block' : 'none'};">
               <div class="grid-2col">
                 <div class="form-group">
-                  <label class="form-label" for="prod-sku">Merchant SKU</label>
-                  <input class="input" id="prod-sku" name="sku" placeholder="SFBF-SHOES-01" value="${escapeAttribute(sku)}" required />
+                  <label class="form-label" for="prod-sku">Your item code</label>
+                  <input class="input" id="prod-sku" name="sku" placeholder="e.g. BLUE-SNEAKER-01" value="${escapeAttribute(sku)}" required />
+                  <span class="field-help">A unique code you use to find this item in your own stock records.</span>
                 </div>
                 <div class="form-group">
-                  <label class="form-label" for="prod-stock">Available Quantity</label>
+                  <label class="form-label" for="prod-stock">How many can you sell now?</label>
                   <input class="input" id="prod-stock" name="availableQuantity" type="number" min="0" step="1" placeholder="e.g. 15" value="${escapeAttribute(availableQuantity)}" required />
                 </div>
               </div>
@@ -1544,12 +1900,12 @@ function renderAddProductView() {
             <div id="variants-matrix-box" style="display:${variantMode === 'variants' ? 'block' : 'none'};">
               <!-- Size Options -->
               <div class="variant-options-group">
-                <label class="form-label">Select Available Sizes</label>
+                <label class="form-label">Choose the ${escapeHtml(variantFields.primaryLabel.toLowerCase())} you have</label>
                 <div class="variant-pills-row">
-                  ${footwearSizes.map((sz) => `
+                  ${variantFields.primaryOptions.map((sz) => `
                     <label class="variant-checkbox-pill">
                       <input type="checkbox" name="variantSize" value="${sz}" ${selectedSizes.includes(sz) ? 'checked' : ''} data-action="toggle-variant-pill" />
-                      <span>EU ${sz}</span>
+                      <span>${escapeHtml(`${variantFields.primaryPrefix}${sz}`)}</span>
                     </label>
                   `).join('')}
                 </div>
@@ -1557,9 +1913,9 @@ function renderAddProductView() {
 
               <!-- Color Options -->
               <div class="variant-options-group">
-                <label class="form-label">Select Available Colors</label>
+                <label class="form-label">Choose the ${escapeHtml(variantFields.secondaryLabel.toLowerCase())} you have</label>
                 <div class="variant-pills-row">
-                  ${popularColors.map((col) => `
+                  ${variantFields.secondaryOptions.map((col) => `
                     <label class="variant-checkbox-pill">
                       <input type="checkbox" name="variantColor" value="${col}" ${selectedColors.includes(col) ? 'checked' : ''} data-action="toggle-variant-pill" />
                       <span>${col}</span>
@@ -1587,7 +1943,7 @@ function renderAddProductView() {
                       const matrixStock = savedVariant ? String(savedVariant.availableQuantity) : String(Math.max(2, 6 - idx));
                       return `
                       <tr>
-                        <td><strong>EU ${size} / ${color}</strong></td>
+                        <td><strong>${escapeHtml(productVariantLabel(size, color, categoryProfile.key === 'standard' ? '' : state.categories.find((c) => c.id === categoryId)?.name || ''))}</strong></td>
                         <td><input class="variant-matrix-input" data-variant-field="sku" data-option-size="${escapeAttribute(size)}" data-option-color="${escapeAttribute(color)}" value="${escapeAttribute(matrixSku)}" /></td>
                         <td><input class="variant-matrix-input" data-variant-field="price" type="number" min="1" value="${escapeAttribute(matrixPrice)}" /></td>
                         <td><input class="variant-matrix-input" data-variant-field="stock" type="number" min="0" value="${escapeAttribute(matrixStock)}" /></td>
@@ -1621,20 +1977,26 @@ function renderAddProductView() {
             </div>
 
             <div class="form-group">
-              <label class="form-label" for="prod-desc">Detailed Description & Care Instructions</label>
-              <textarea class="textarea" id="prod-desc" name="description" placeholder="Describe materials, size guidance, packaging, and authentic craftsmanship…" style="min-height:110px;" required>${escapeHtml(description)}</textarea>
+              <label class="form-label" for="prod-desc">Product description</label>
+              <textarea class="textarea" id="prod-desc" name="description" placeholder="Example: Lightweight blue canvas sneakers with a cushioned insole. Best for everyday wear. Includes original box." style="min-height:110px;" required>${escapeHtml(description)}</textarea>
+              <span class="field-help">This appears below the image on the product page.</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="prod-care">Care instructions (optional)</label>
+              <textarea class="textarea" id="prod-care" name="careInstructions" placeholder="Example: Wipe with a damp cloth. Air dry away from direct heat." style="min-height:78px;">${escapeHtml(careInstructions)}</textarea>
+              <span class="field-help">Shoppers see this below the product description.</span>
             </div>
 
             <div class="grid-2col">
               <div class="form-group">
-                <label class="form-label" for="prod-weight">Package Weight (kg)</label>
-                <input class="input" id="prod-weight" name="weightKg" type="number" step="0.05" min="0.1" placeholder="0.85" value="${escapeAttribute(weightKg)}" />
+                <label class="form-label" for="prod-weight">Packed weight (kg)</label>
+                <input class="input" id="prod-weight" name="weightKg" type="number" step="0.05" min="0.1" placeholder="e.g. 0.85" value="${escapeAttribute(weightKg)}" required />
                 <span class="field-help">Used for GIGL / DHL automated courier rates.</span>
               </div>
               <div class="form-group">
-                <label class="form-label" for="prod-dims">Parcel Dimensions (L × W × H cm)</label>
-                <input class="input" id="prod-dims" name="dimensionsCm" placeholder="33 × 21 × 12" value="${escapeAttribute(dimensionsCm)}" />
-                <span class="field-help">Box packaging dimensions.</span>
+                <label class="form-label" for="prod-dims">Packed size (L × W × H cm)</label>
+                <input class="input" id="prod-dims" name="dimensionsCm" placeholder="e.g. 33 × 21 × 12" value="${escapeAttribute(dimensionsCm)}" required />
+                <span class="field-help">Required for delivery pricing and visible to Operations during approval.</span>
               </div>
             </div>
 
@@ -1671,26 +2033,29 @@ function renderAddProductView() {
             <div class="quality-checklist-card">
               <div class="quality-header">
                 <div class="quality-title">${icon('check-square')} Marketplace Moderation Readiness</div>
-                <span style="font-size:11px;font-weight:700;color:var(--ink-muted);" id="quality-count-text">${checksPassed}/6 Standards Met</span>
+                <span style="font-size:11px;font-weight:700;color:var(--ink-muted);" id="quality-count-text">${checksPassed}/7 Checks complete</span>
               </div>
               <div class="quality-items-list">
                 <div class="quality-item ${checkTitle ? 'passed' : 'missing'}" id="chk-title">
-                  ${icon(checkTitle ? 'check' : 'circle')} Title Length (10+ characters)
+                  ${icon(checkTitle ? 'check' : 'circle')} Clear name (10+ characters)
                 </div>
                 <div class="quality-item ${checkCategory ? 'passed' : 'missing'}" id="chk-cat">
-                  ${icon(checkCategory ? 'check' : 'circle')} Category Taxonomy Assigned
+                  ${icon(checkCategory ? 'check' : 'circle')} Category chosen
                 </div>
                 <div class="quality-item ${checkImage ? 'passed' : 'missing'}" id="chk-img">
-                  ${icon(checkImage ? 'check' : 'circle')} 1:1 High-Res Media Loaded
+                  ${icon(checkImage ? 'check' : 'circle')} Photo meets category rules
                 </div>
                 <div class="quality-item ${checkPrice ? 'passed' : 'missing'}" id="chk-price">
-                  ${icon(checkPrice ? 'check' : 'circle')} Valid Retail Naira Price
+                  ${icon(checkPrice ? 'check' : 'circle')} Selling price added
                 </div>
                 <div class="quality-item ${checkStock ? 'passed' : 'missing'}" id="chk-stock">
-                  ${icon(checkStock ? 'check' : 'circle')} Inventory Units Configured
+                  ${icon(checkStock ? 'check' : 'circle')} Sellable quantity added
                 </div>
                 <div class="quality-item ${checkDesc ? 'passed' : 'missing'}" id="chk-desc">
-                  ${icon(checkDesc ? 'check' : 'circle')} Specifications & Bullet Highlights
+                  ${icon(checkDesc ? 'check' : 'circle')} Description or key highlights added
+                </div>
+                <div class="quality-item ${weightKg && dimensionsCm ? 'passed' : 'missing'}" id="chk-shipping">
+                  ${icon(weightKg && dimensionsCm ? 'check' : 'circle')} Packed weight and size added
                 </div>
               </div>
             </div>
@@ -1713,11 +2078,11 @@ function renderAddProductView() {
                 </button>
               </div>
               <div style="display:flex;gap:10px;">
-                <button class="btn btn-secondary" type="button" data-action="save-as-draft" ${state.busy === 'create-product' || !canCreate ? 'disabled' : ''}>
+                <button class="btn btn-secondary" type="button" data-action="save-as-draft" ${state.busy || state.isUploadingProductImage || !canCreate ? 'disabled' : ''}>
                   ${icon('file-text')} Save as Draft
                 </button>
-                <button class="btn btn-primary" type="submit" ${state.busy === 'create-product' || !canCreate ? 'disabled' : ''}>
-                  ${state.busy === 'create-product' ? 'Saving…' : `${icon('send')} ${isEditing ? 'Save Changes' : (submitForReview ? 'Submit for Review' : 'Save Product')}`}
+                <button class="btn btn-primary" type="submit" ${state.busy || state.isUploadingProductImage || !canCreate ? 'disabled' : ''}>
+                  ${state.busy === 'create-product' ? 'Saving…' : `${icon('send')} ${isRejected ? 'Resubmit for Moderation' : (isEditing ? 'Save Changes' : (submitForReview ? 'Submit for Review' : 'Save Product'))}`}
                 </button>
               </div>
             </div>
@@ -1751,7 +2116,8 @@ function renderAddProductView() {
           ` : ''}
           <div class="shopper-card-mock">
             <div class="shopper-card-img-wrap">
-              <img src="${escapeAttribute(previewImg)}" alt="${escapeAttribute(previewTitle)}" class="shopper-card-img" id="preview-card-img" onerror="this.src='assets/product-sneakers-arch.jpg'" />
+              <img src="${escapeAttribute(previewImg)}" alt="${escapeAttribute(previewTitle)}" class="shopper-card-img" id="preview-card-img" ${hasImage ? '' : 'hidden'} />
+              <div class="shopper-preview-empty" id="preview-card-empty" ${hasImage ? 'hidden' : ''}>${icon('image')}<strong>Your product photo appears here</strong><span>Upload a category-approved image to begin.</span></div>
               <div class="shopper-badge-discount" id="preview-discount-badge" style="display:${discountPercent > 0 ? 'inline-block' : 'none'};">
                 <span id="preview-discount-val">${discountPercent}</span>% OFF
               </div>
@@ -1808,7 +2174,8 @@ function renderAddProductView() {
 
             <!-- Hero Image -->
             <div class="shopper-detail-hero">
-              <img src="${escapeAttribute(previewImg)}" alt="${escapeAttribute(previewTitle)}" id="detail-hero-img" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='assets/product-sneakers-arch.jpg'" />
+              <img src="${escapeAttribute(previewImg)}" alt="${escapeAttribute(previewTitle)}" id="detail-hero-img" style="width:100%;height:100%;object-fit:cover;" ${hasImage ? '' : 'hidden'} />
+              <div class="shopper-preview-empty" id="detail-hero-empty" ${hasImage ? 'hidden' : ''}>${icon('image')}<strong>Your product photo</strong><span>will appear here</span></div>
               <div style="position:absolute;bottom:8px;left:0;right:0;display:flex;justify-content:center;gap:4px;">
                 <span style="width:6px;height:6px;border-radius:50%;background:#ffffff;"></span>
                 <span style="width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>
@@ -1835,13 +2202,13 @@ function renderAddProductView() {
                 </span>
               </div>
 
-              <!-- Available Sizes Row -->
+              <!-- Available product options -->
               <div>
-                <span style="font-size:11px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Select Size</span>
+                <span style="font-size:11px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Choose ${escapeHtml(variantFields.primaryLabel)}</span>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;" id="detail-sizes-row">
                   ${selectedSizes.map((sz, i) => `
                     <button type="button" class="sim-size-pill ${sz === (state.simSelectedSize || selectedSizes[0]) ? 'active' : ''}" data-action="sim-select-size" data-size="${escapeAttribute(sz)}">
-                      EU ${escapeHtml(sz)}
+                      ${escapeHtml(`${variantFields.primaryPrefix}${sz}`)}
                     </button>
                   `).join('')}
                 </div>
@@ -1853,6 +2220,8 @@ function renderAddProductView() {
                 ${bullet2 ? `<li>${escapeHtml(bullet2)}</li>` : ''}
                 ${bullet3 ? `<li>${escapeHtml(bullet3)}</li>` : ''}
               </ul>
+              <div class="shopper-preview-copy" id="detail-description-text" ${description ? '' : 'hidden'}>${escapeHtml(description)}</div>
+              <div class="shopper-preview-care" id="detail-care-text" ${careInstructions ? '' : 'hidden'}><strong>Care:</strong> ${escapeHtml(careInstructions)}</div>
 
               <!-- Escrow Guarantee Badge -->
               <div class="shopper-escrow-badge">
@@ -3192,6 +3561,154 @@ function renderModal() {
       </div>`;
   }
 
+  if (state.modal.type === 'photo-standards') {
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <div class="modal-dialog-standards" onclick="event.stopPropagation()">
+          <div class="modal-header" style="background:linear-gradient(135deg, #0b2e1e 0%, #061910 100%);color:#ffffff;border-bottom:1px solid rgba(255,255,255,0.1);padding:18px 24px;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;color:#4ade80;">
+                ${icon('camera')}
+              </div>
+              <div>
+                <h3 class="modal-title" style="color:#ffffff;font-size:18px;font-weight:700;margin:0;">Product Photography & Imagery Standards</h3>
+                <p style="margin:2px 0 0;font-size:12px;color:rgba(255,255,255,0.75);">Official guidelines for vendor submissions & Operations Admin approval</p>
+              </div>
+            </div>
+            <button class="modal-close-btn" type="button" data-action="close-modal" style="color:#ffffff;background:rgba(255,255,255,0.1);border-radius:8px;padding:6px;">${icon('x')}</button>
+          </div>
+
+          <div class="standards-scroll-content">
+            <!-- Key Metric Highlights -->
+            <div class="standards-stats-row">
+              <div class="standards-stat-card">
+                <span class="standards-stat-icon">${icon('check-circle')}</span>
+                <div>
+                  <strong>Fast-Track Approval</strong>
+                  <p>Listings meeting these guidelines are approved by Operations Admins on first review.</p>
+                </div>
+              </div>
+              <div class="standards-stat-card">
+                <span class="standards-stat-icon">${icon('trending-up')}</span>
+                <div>
+                  <strong>+38% Conversion</strong>
+                  <p>High-resolution, clean imagery dramatically improves buyer purchase rates on mobile.</p>
+                </div>
+              </div>
+              <div class="standards-stat-card">
+                <span class="standards-stat-icon">${icon('shield-check')}</span>
+                <div>
+                  <strong>-50% Return Disputes</strong>
+                  <p>Accurate photos and authentic representation prevent buyer returns and chargebacks.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Technical Specifications Grid -->
+            <div class="standards-section">
+              <h4 class="standards-heading">${icon('sliders')} 1. Technical Specifications</h4>
+              <div class="standards-specs-grid">
+                <div class="standards-spec-item">
+                  <div class="spec-label">Aspect Ratio</div>
+                  <div class="spec-value">1:1 Square</div>
+                  <div class="spec-desc">Images must be square (e.g. 1000×1000px min, 1200×1200px recommended). Prevents cropping on mobile feed cards.</div>
+                </div>
+                <div class="standards-spec-item">
+                  <div class="spec-label">Accepted Formats</div>
+                  <div class="spec-value">JPG, PNG, WebP</div>
+                  <div class="spec-desc">Safest, high-fidelity web formats. Animated GIFs, PDFs, and SVGs are strictly blocked for security.</div>
+                </div>
+                <div class="standards-spec-item">
+                  <div class="spec-label">Maximum File Size</div>
+                  <div class="spec-value">5.0 MB</div>
+                  <div class="spec-desc">Optimized for rapid mobile network loading while preserving crisp detail and sharp zoom capability.</div>
+                </div>
+                <div class="standards-spec-item">
+                  <div class="spec-label">Color Profile</div>
+                  <div class="spec-value">sRGB / Natural</div>
+                  <div class="spec-desc">True-to-life colors without artificial beauty filters, color shifting, or heavy HDR saturation.</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Visual DOs vs DONTs -->
+            <div class="standards-section">
+              <h4 class="standards-heading">${icon('eye')} 2. Visual Comparison: Approved vs. Rejected</h4>
+              <div class="standards-compare-grid">
+                <!-- DO Card -->
+                <div class="standards-compare-card approved">
+                  <div class="compare-card-badge approved">${icon('check')} APPROVED STANDARD</div>
+                  <div class="compare-img-wrap">
+                    <img src="https://images.unsplash.com/photo-1549298916-b41d501d3772?auto=format&fit=crop&w=800&q=80" alt="Approved example" class="compare-img" />
+                  </div>
+                  <ul class="compare-checklist approved">
+                    <li>${icon('check')} Clean, neutral background (pure white, soft gray, or tidy studio)</li>
+                    <li>${icon('check')} Product occupies 80%–85% of the frame, perfectly centered</li>
+                    <li>${icon('check')} Sharp focus showing material textures, stitching, and genuine details</li>
+                    <li>${icon('check')} Even, bright lighting with natural shadows</li>
+                    <li>${icon('check')} Zero external watermarks, phone numbers, or promotional overlays</li>
+                  </ul>
+                </div>
+
+                <!-- DONT Card -->
+                <div class="standards-compare-card rejected">
+                  <div class="compare-card-badge rejected">${icon('x')} REJECTED (Corrections Required)</div>
+                  <div class="compare-img-wrap rejected">
+                    <img src="https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?auto=format&fit=crop&w=800&q=80" alt="Rejected example" class="compare-img" style="filter:blur(1px) contrast(0.85);" />
+                    <div class="watermark-mock">SAMPLE WATERMARK · 08012345678</div>
+                  </div>
+                  <ul class="compare-checklist rejected">
+                    <li>${icon('x')} Cluttered or messy personal backgrounds (bedding, messy floors)</li>
+                    <li>${icon('x')} Phone numbers, WhatsApp handles, or price overlays on image</li>
+                    <li>${icon('x')} Blurry, pixelated, or low-resolution smartphone screenshots</li>
+                    <li>${icon('x')} Extreme zoom or off-center cropping cutting off product edges</li>
+                    <li>${icon('x')} Misleading generic stock photos that differ from actual inventory</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recommended Angles -->
+            <div class="standards-section">
+              <h4 class="standards-heading">${icon('layers')} 3. Multi-Angle Photo Sequence (Recommended)</h4>
+              <div class="standards-angles-grid">
+                <div class="angle-card">
+                  <div class="angle-num">1</div>
+                  <strong>Hero / Front</strong>
+                  <p>Complete product facing camera on neutral backdrop. First impression for shoppers.</p>
+                </div>
+                <div class="angle-card">
+                  <div class="angle-num">2</div>
+                  <strong>Side / 45° Profile</strong>
+                  <p>Displays depth, silhouette, thickness, and ergonomics.</p>
+                </div>
+                <div class="angle-card">
+                  <div class="angle-num">3</div>
+                  <strong>Detail & Texture</strong>
+                  <p>Close-up of authentic branding, seams, hardware, ports, or ingredient labels.</p>
+                </div>
+                <div class="angle-card">
+                  <div class="angle-num">4</div>
+                  <strong>Packaging / In-Box</strong>
+                  <p>Shows original box, accessories, tags, and documentation included.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer" style="padding:16px 24px;background:var(--page-subtle);border-top:1px solid var(--border-light);display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:12px;color:var(--ink-muted);display:flex;align-items:center;gap:6px;">
+              ${icon('shield-check')} Standards verified and approved by SellFastBuyFast Operations
+            </span>
+            <button class="btn btn-primary" type="button" data-action="close-modal">
+              Got It, Return to Product Studio
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   return '';
 }
 
@@ -3202,6 +3719,30 @@ function renderModal() {
 function requestErrorMessage(error, fallback = 'The request could not be completed.') {
   if (!error) return fallback;
   if (error.code === 'VALIDATION_ERROR') {
+    if (error.message && typeof error.message === 'string' && error.message.trim().startsWith('[') && error.message.includes('"path"')) {
+      try {
+        const issues = JSON.parse(error.message);
+        if (Array.isArray(issues) && issues.length > 0) {
+          const first = issues[0];
+          const pathStr = Array.isArray(first.path) ? first.path.join('.') : '';
+          if (pathStr.includes('media')) {
+            return 'Invalid product image URL. Please upload a photo from your device or gallery, or supply a valid image URL.';
+          }
+          if (pathStr.includes('title')) {
+            return 'Product title must be between 3 and 180 characters.';
+          }
+          if (pathStr.includes('description')) {
+            return 'Product description must be at least 10 characters.';
+          }
+          if (pathStr.includes('price')) {
+            return 'Please enter a valid retail price for the product.';
+          }
+          if (first.message) {
+            return `Validation error: ${first.message} (${pathStr || 'field'})`;
+          }
+        }
+      } catch {}
+    }
     return error.message || 'Please correct the highlighted fields and try again.';
   }
   if (error.code === 'SLUG_ALREADY_EXISTS') {
@@ -3237,6 +3778,159 @@ function requestErrorMessage(error, fallback = 'The request could not be complet
   return error.message || fallback;
 }
 
+let notificationChannel = null;
+let notificationPollInterval = null;
+
+function teardownNotificationsSync() {
+  if (notificationChannel) {
+    try {
+      state.client?.removeChannel?.(notificationChannel);
+    } catch (_) {}
+    notificationChannel = null;
+  }
+  if (notificationPollInterval) {
+    clearInterval(notificationPollInterval);
+    notificationPollInterval = null;
+  }
+}
+
+function setupNotificationsSync() {
+  if (!state.session?.user?.id) return;
+  const userId = state.session.user.id;
+
+  // Supabase Realtime channel for instant push on notifications table
+  if (state.client && !notificationChannel) {
+    try {
+      notificationChannel = state.client
+        .channel(`vendor-notifications:${userId}`)
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${userId}`,
+        }, (payload) => {
+          const newNotif = payload.new;
+          if (newNotif) {
+            const formatted = {
+              id: newNotif.id,
+              userId: newNotif.user_id || newNotif.userId,
+              type: newNotif.type,
+              title: newNotif.title,
+              body: newNotif.body,
+              data: newNotif.data,
+              readAt: newNotif.read_at || newNotif.readAt,
+              createdAt: newNotif.created_at || newNotif.createdAt || new Date().toISOString(),
+            };
+            if (!state.notifications.some((n) => n.id === formatted.id)) {
+              state.notifications = [formatted, ...state.notifications];
+              state.unreadNotificationsCount = state.notifications.filter((n) => !n.readAt).length;
+              render();
+
+              const isRejection = formatted.type === 'catalog_product_rejected';
+              showNotice(
+                isRejection
+                  ? 'Moderation Notice: Changes requested for your listing.'
+                  : (formatted.title || 'New notification received.'),
+                isRejection ? 'error' : 'success'
+              );
+            }
+          }
+        })
+        .subscribe();
+    } catch (e) {
+      console.warn('Realtime notifications subscription failed:', e);
+    }
+  }
+
+  // 15s polling fallback to guarantee notification delivery
+  if (!notificationPollInterval) {
+    notificationPollInterval = setInterval(async () => {
+      if (!state.session || !state.merchant || document.hidden) return;
+      try {
+        const notifs = await api('/v1/notifications');
+        if (Array.isArray(notifs)) {
+          const prevCount = state.unreadNotificationsCount;
+          state.notifications = notifs;
+          state.unreadNotificationsCount = notifs.filter((n) => !n.readAt).length;
+          if (state.unreadNotificationsCount > prevCount) {
+            render();
+          }
+        }
+      } catch {
+        // silent polling catch
+      }
+    }, 15000);
+  }
+}
+
+async function markNotificationAsRead(id) {
+  const notif = state.notifications.find((n) => n.id === id);
+  if (notif && !notif.readAt) {
+    notif.readAt = new Date().toISOString();
+    state.unreadNotificationsCount = state.notifications.filter((n) => !n.readAt).length;
+    render();
+    try {
+      await api(`/v1/notifications/${id}/read`, { method: 'PATCH' });
+    } catch (e) {
+      console.warn('Failed to mark notification read:', e);
+    }
+  }
+}
+
+async function markAllNotificationsAsRead() {
+  const hadUnread = state.unreadNotificationsCount > 0;
+  state.notifications.forEach((n) => { n.readAt = n.readAt || new Date().toISOString(); });
+  state.unreadNotificationsCount = 0;
+  render();
+  if (hadUnread) {
+    try {
+      await api('/v1/notifications/read-all', { method: 'POST' });
+    } catch (e) {
+      console.warn('Failed to mark all notifications read:', e);
+    }
+  }
+}
+
+function loadProductIntoStudio(prod, isFix = false) {
+  if (!prod) return;
+  const variant = prod.variants?.[0];
+  const media = prod.media?.find((m) => m.mediaType === 'image');
+  const isRejected = prod.status === 'rejected' || isFix;
+  state.editingProductId = prod.id;
+  state.productDraft = {
+    title: prod.title || '',
+    categoryId: prod.categoryId || '',
+    brand: prod.brand || 'SellFast Signature',
+    condition: prod.condition || 'brand_new',
+    tags: Array.isArray(prod.tags) ? prod.tags.join(', ') : '',
+    sku: variant?.sku || '',
+    priceNaira: variant ? String(Math.round(variant.priceMinor / 100)) : '',
+    comparePriceNaira: prod.comparePriceMinor ? String(Math.round(prod.comparePriceMinor / 100)) : '',
+    availableQuantity: variant ? String(variant.availableQuantity) : '10',
+    lowStockThreshold: variant ? String(variant.lowStockThreshold ?? 3) : '3',
+    variantMode: (prod.variants?.length ?? 0) > 1 ? 'variants' : 'single',
+    selectedSizes: [...new Set((prod.variants || []).map((item) => item.optionSize).filter(Boolean))],
+    selectedColors: [...new Set((prod.variants || []).map((item) => item.optionColor).filter(Boolean))],
+    variantMatrix: prod.variants || [],
+    description: prod.description || '',
+    imageUrl: media?.mediaUrl || '',
+    weightKg: prod.weightKg ? String(prod.weightKg) : '0.85',
+    dimensionsCm: prod.dimensionsCm || '33 × 21 × 12',
+    returnPolicy: prod.returnPolicy || '7_day_escrow',
+    warranty: prod.warranty || '30_days',
+    submitForReview: true,
+    rejectionReason: prod.rejectionReason || prod.rejection_reason || '',
+  };
+  state.activeView = 'add-product';
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (isRejected && (prod.rejectionReason || prod.rejection_reason)) {
+    showNotice(`Loaded "${prod.title}" into Product Studio with Operations feedback.`, 'success');
+  } else {
+    showNotice(`Loaded "${prod.title}" into Product Studio.`);
+  }
+}
+
 async function loadMerchantData() {
   if (!state.merchant) return;
   const requestVersion = ++state.dataRequestVersion;
@@ -3258,10 +3952,11 @@ async function loadMerchantData() {
       api(`/v1/fulfilment/merchant/${merchantId}/orders`, { signal: controller.signal }),
       api(`/v1/vendor/merchant/${merchantId}/returns`, { signal: controller.signal }),
       api('/v1/catalog/categories', { signal: controller.signal }),
+      api('/v1/notifications', { signal: controller.signal }),
     ]);
     if (requestVersion !== state.dataRequestVersion) return;
 
-    const [overview, products, orders, returns, categories] = results;
+    const [overview, products, orders, returns, categories, notificationsRes] = results;
     if (overview.status === 'fulfilled') {
       state.overview = overview.value;
       state.merchant = overview.value.merchant;
@@ -3273,6 +3968,11 @@ async function loadMerchantData() {
     if (orders.status === 'fulfilled') state.orders = orders.value;
     if (returns.status === 'fulfilled') state.returns = returns.value;
     if (categories.status === 'fulfilled') state.categories = categories.value;
+    if (notificationsRes && notificationsRes.status === 'fulfilled') {
+      const notifs = Array.isArray(notificationsRes.value) ? notificationsRes.value : (notificationsRes.value?.notifications || []);
+      state.notifications = notifs;
+      state.unreadNotificationsCount = notifs.filter((n) => !n.readAt).length;
+    }
 
     // Load server-side profile draft if merchant is not registered
     if (state.merchant?.registrationState === 'not_registered' && state.overview?.viewer?.canEditProfile) {
@@ -3305,40 +4005,62 @@ async function loadMerchantData() {
     state.orders = [];
     state.returns = [];
     state.categories = [];
+    if (isAuthError(error)) {
+      await handleSessionExpired('Your session has expired. Please sign in again.');
+      return;
+    }
     state.workspaceError = requestErrorMessage(error, 'The merchant workspace is temporarily unavailable. Check your connection and try again.');
   } finally {
     if (requestVersion === state.dataRequestVersion) {
       state.loading = false;
       state.dataAbortController = null;
+      setupNotificationsSync();
       render();
     }
   }
 }
 
+let workspaceGeneration = 0;
+let workspaceLoadingPromise = null;
 async function loadWorkspace() {
-  state.loading = true;
-  state.workspaceError = '';
-  render();
-  try {
-    const data = await api('/v1/vendor/me');
-    state.merchants = data.merchants || [];
-    const savedId = window.localStorage.getItem('sfbf-vendor-merchant-id');
-    state.merchant = state.merchants.find((merchant) => merchant.id === savedId) || state.merchants[0] || null;
-
-    if (!state.merchant) {
-      state.authMode = 'onboarding';
-      state.loading = false;
-      render();
-      return;
-    }
-    await loadMerchantData();
-  } catch (error) {
-    state.loading = false;
-    state.merchants = [];
-    state.merchant = null;
-    state.workspaceError = requestErrorMessage(error, 'The merchant workspace is temporarily unavailable. Check your connection and try again.');
-    render();
+  if (workspaceLoadingPromise) {
+    return workspaceLoadingPromise;
   }
+  const generation = workspaceGeneration;
+  workspaceLoadingPromise = (async () => {
+    state.loading = true;
+    state.workspaceError = '';
+    render();
+    try {
+      const data = await api('/v1/vendor/me');
+      if (generation !== workspaceGeneration || !state.session) return;
+      state.merchants = data.merchants || [];
+      const savedId = window.localStorage.getItem('sfbf-vendor-merchant-id');
+      state.merchant = state.merchants.find((merchant) => merchant.id === savedId) || state.merchants[0] || null;
+
+      if (!state.merchant) {
+        state.authMode = 'onboarding';
+        state.loading = false;
+        render();
+        return;
+      }
+      await loadMerchantData();
+    } catch (error) {
+      if (generation !== workspaceGeneration) return;
+      state.loading = false;
+      state.merchants = [];
+      state.merchant = null;
+      if (isAuthError(error)) {
+        await handleSessionExpired('Your session has expired. Please sign in again.');
+        return;
+      }
+      state.workspaceError = requestErrorMessage(error, 'The merchant workspace is temporarily unavailable. Check your connection and try again.');
+      render();
+    }
+  })().finally(() => {
+    if (generation === workspaceGeneration) workspaceLoadingPromise = null;
+  });
+  return workspaceLoadingPromise;
 }
 
 async function performServerAction(key, operation, successMessage) {
@@ -3385,6 +4107,31 @@ async function performServerAction(key, operation, successMessage) {
    EVENT LISTENERS & INTERACTION HANDLERS
    ========================================================================== */
 
+// Real-time tracking of auth inputs to ensure typed values (email, password, etc.) are never lost
+document.addEventListener('input', (event) => {
+  const target = event.target;
+  if (!target) return;
+  if (target.id === 'email' || target.name === 'email') {
+    state.pendingEmail = target.value;
+  } else if (target.id === 'password' || target.name === 'password') {
+    state.pendingPassword = target.value;
+  } else if (target.id === 'full-name' || target.name === 'fullName') {
+    state.pendingFullName = target.value;
+  } else if (target.id === 'business-name' || target.name === 'businessName') {
+    state.pendingBusinessName = target.value;
+  } else if (target.id === 'phone' || target.name === 'phone') {
+    state.pendingPhone = target.value;
+  }
+});
+
+// Prevent focus loss and Safari autofill disruption when clicking toggle-password button
+document.addEventListener('mousedown', (event) => {
+  const toggleBtn = event.target.closest('[data-action="toggle-password"]');
+  if (toggleBtn) {
+    event.preventDefault();
+  }
+});
+
 document.addEventListener('click', async (event) => {
   // Dismiss modal when clicking on outside backdrop
   if (event.target.classList && (event.target.classList.contains('modal-backdrop') || event.target.classList.contains('lightbox-backdrop'))) {
@@ -3394,9 +4141,53 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
+  // Dismiss notifications dropdown when clicking outside
+  if (state.notificationsOpen && !event.target.closest('.notifications-dropdown-container')) {
+    state.notificationsOpen = false;
+    render();
+  }
+
   const button = event.target.closest('[data-action]');
   if (!button) return;
   const action = button.dataset.action;
+
+  if (action === 'toggle-notifications') {
+    state.notificationsOpen = !state.notificationsOpen;
+    render();
+    return;
+  }
+
+  if (action === 'mark-all-notifications-read') {
+    await markAllNotificationsAsRead();
+    return;
+  }
+
+  if (action === 'read-notification') {
+    const notifId = button.dataset.id;
+    const notif = state.notifications.find((n) => n.id === notifId);
+    if (notif) {
+      await markNotificationAsRead(notifId);
+      const productId = notif.data?.productId || notif.data?.product_id;
+      if (productId) {
+        const prod = state.products.find((p) => String(p.id) === String(productId));
+        if (prod) {
+          state.notificationsOpen = false;
+          loadProductIntoStudio(prod, true);
+          return;
+        }
+      }
+    }
+    return;
+  }
+
+  if (action === 'fix-and-resubmit') {
+    const prodId = button.dataset.productId;
+    const prod = state.products.find((p) => String(p.id) === String(prodId));
+    if (prod) {
+      loadProductIntoStudio(prod, true);
+    }
+    return;
+  }
 
   if (action === 'toggle-sidebar') {
     state.sidebarOpen = !state.sidebarOpen;
@@ -3412,8 +4203,31 @@ document.addEventListener('click', async (event) => {
   }
 
   if (action === 'toggle-password') {
-    state.showPassword = !state.showPassword;
-    render();
+    event.preventDefault();
+    event.stopPropagation();
+    const wrapper = button.closest('.input-wrapper');
+    const input = wrapper?.querySelector('input') || document.getElementById('password');
+    const emailInput = document.getElementById('email');
+    if (emailInput) {
+      state.pendingEmail = emailInput.value;
+    }
+    if (input) {
+      const currentVal = input.value;
+      state.pendingPassword = currentVal;
+      const isPassword = input.type === 'password';
+      input.type = isPassword ? 'text' : 'password';
+      input.value = currentVal;
+      state.showPassword = isPassword;
+      button.innerHTML = icon(isPassword ? 'eye-off' : 'eye');
+      button.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
+      button.setAttribute('title', isPassword ? 'Hide password' : 'Show password');
+      hydrateIcons();
+      try {
+        const len = input.value.length;
+        input.setSelectionRange(len, len);
+        input.focus();
+      } catch (_) {}
+    }
     return;
   }
 
@@ -3566,18 +4380,6 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
-  if (action === 'toggle-product-status') {
-    const productId = button.dataset.productId;
-    const prod = state.products.find((p) => p.id === productId);
-    if (prod) {
-      const newStatus = prod.status === 'published' ? 'draft' : 'published';
-      prod.status = newStatus;
-      render();
-      showNotice(newStatus === 'published' ? `"${prod.title}" is now published live.` : `"${prod.title}" paused and moved to drafts.`);
-    }
-    return;
-  }
-
   if (action === 'delete-product') {
     const productId = button.dataset.productId;
     state.modal = { type: 'delete-product-confirm', productId };
@@ -3625,6 +4427,13 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
+  if (action === 'open-photo-standards') {
+    state.modal = { type: 'photo-standards' };
+    render();
+    return;
+  }
+
+
   if (action === 'close-modal') {
     state.modal = null;
     state.formError = '';
@@ -3633,21 +4442,27 @@ document.addEventListener('click', async (event) => {
   }
 
   if (action === 'sign-out') {
-    if (state.client) await state.client.auth.signOut();
-    state.session = null;
-    state.merchants = [];
-    state.merchant = null;
-    state.authMode = 'signin';
-    render();
+    await handleSessionExpired('');
     return;
   }
 
   if (action === 'refresh-current') {
     try {
+      state.workspaceError = '';
+      if (state.client && state.session) {
+        const { data: refreshData } = await state.client.auth.refreshSession().catch(() => ({ data: null }));
+        if (refreshData?.session) {
+          state.session = refreshData.session;
+        }
+      }
       if (state.merchant) await loadMerchantData();
       else if (state.session) await loadWorkspace();
       showNotice('Live data refreshed.');
     } catch (error) {
+      if (isAuthError(error)) {
+        await handleSessionExpired('Your session has expired. Please sign in again.');
+        return;
+      }
       showNotice(requestErrorMessage(error, 'The workspace could not be refreshed.'), 'error');
     }
     return;
@@ -3712,36 +4527,7 @@ document.addEventListener('click', async (event) => {
     const prodId = button.dataset.productId;
     const prod = state.products.find((p) => String(p.id) === String(prodId));
     if (prod) {
-      const variant = prod.variants?.[0];
-      const media = prod.media?.find((m) => m.mediaType === 'image');
-      state.editingProductId = prod.id;
-      state.productDraft = {
-        title: prod.title || '',
-        categoryId: prod.categoryId || '',
-        brand: prod.brand || 'SellFast Signature',
-        condition: prod.condition || 'brand_new',
-        tags: Array.isArray(prod.tags) ? prod.tags.join(', ') : '',
-        sku: variant?.sku || '',
-        priceNaira: variant ? String(Math.round(variant.priceMinor / 100)) : '',
-        comparePriceNaira: prod.comparePriceMinor ? String(Math.round(prod.comparePriceMinor / 100)) : '',
-        availableQuantity: variant ? String(variant.availableQuantity) : '10',
-        lowStockThreshold: variant ? String(variant.lowStockThreshold ?? 3) : '3',
-        variantMode: (prod.variants?.length ?? 0) > 1 ? 'variants' : 'single',
-        selectedSizes: [...new Set((prod.variants || []).map((item) => item.optionSize).filter(Boolean))],
-        selectedColors: [...new Set((prod.variants || []).map((item) => item.optionColor).filter(Boolean))],
-        variantMatrix: prod.variants || [],
-        description: prod.description || '',
-        imageUrl: media?.mediaUrl || '',
-        weightKg: prod.weightKg ? String(prod.weightKg) : '0.85',
-        dimensionsCm: prod.dimensionsCm || '33 × 21 × 12',
-        returnPolicy: prod.returnPolicy || '7_day_escrow',
-        warranty: prod.warranty || '30_days',
-        submitForReview: prod.status === 'published' || prod.status === 'pending_approval',
-      };
-      state.activeView = 'add-product';
-      render();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      showNotice(`Loaded "${prod.title}" into Product Studio.`);
+      loadProductIntoStudio(prod, prod.status === 'rejected');
     } else {
       state.activeView = 'add-product';
       render();
@@ -3773,6 +4559,12 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
+  if (action === 'trigger-product-image-upload') {
+    const fileInput = document.getElementById('prod-image-file');
+    if (fileInput && !state.isUploadingProductImage && !state.busy) fileInput.click();
+    return;
+  }
+
   if (action === 'new-product') {
     state.editingProductId = null;
     state.productDraft = {
@@ -3781,9 +4573,10 @@ document.addEventListener('click', async (event) => {
       sku: '',
       priceNaira: '',
       comparePriceNaira: '',
-      availableQuantity: '10',
+      availableQuantity: '',
       description: '',
       imageUrl: '',
+      imageValidation: null,
       submitForReview: true,
     };
     state.activeView = 'add-product';
@@ -3936,67 +4729,12 @@ document.addEventListener('click', async (event) => {
   }
 
   if (action === 'save-as-draft') {
+    if (state.isUploadingProductImage || state.busy) return;
     const form = document.getElementById('product-form');
     if (!form) return;
-    const title = form.elements.title?.value.trim() || (state.productDraft?.title || 'Draft Product');
-    const categoryId = form.elements.categoryId?.value || (state.categories[0]?.id || 'cat-apparel');
-    const brand = form.elements.brand?.value.trim() || 'SellFast Signature';
-    const condition = form.elements.condition?.value || 'brand_new';
-    const tags = form.elements.tags?.value.trim() || '';
-    const sku = form.elements.sku?.value.trim() || `SFBF-DRAFT-${Math.floor(1000 + Math.random() * 9000)}`;
-    const priceNaira = Number(form.elements.priceNaira?.value) || 0;
-    const comparePriceNaira = Number(form.elements.comparePriceNaira?.value) || 0;
-    const availableQuantity = Number(form.elements.availableQuantity?.value) || 0;
-    const description = form.elements.description?.value.trim() || 'Product specifications pending completion.';
-    const imageUrl = form.elements.imageUrl?.value.trim() || 'assets/product-sneakers-arch.jpg';
-    const weightKg = form.elements.weightKg?.value.trim() || '0.85';
-    const dimensionsCm = form.elements.dimensionsCm?.value.trim() || '33 × 21 × 12';
-    const returnPolicy = form.elements.returnPolicy?.value || '7_day_escrow';
-    const warranty = form.elements.warranty?.value || '30_days';
-
-    const draftProd = {
-      id: state.editingProductId || `draft-prod-${Date.now()}`,
-      title,
-      categoryId,
-      brand,
-      condition,
-      sku,
-      status: 'draft',
-      priceMinor: Math.round(priceNaira * 100),
-      comparePriceMinor: comparePriceNaira > 0 ? Math.round(comparePriceNaira * 100) : null,
-      availableQuantity,
-      description,
-      imageUrl,
-      weightKg: Number(weightKg) || 0.85,
-      dimensionsCm,
-      returnPolicy,
-      warranty,
-      media: [{ mediaType: 'image', mediaUrl: imageUrl }],
-      variants: [{
-        sku,
-        title: 'Default',
-        priceMinor: Math.round(priceNaira * 100),
-        availableQuantity,
-      }],
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (state.editingProductId) {
-      const idx = state.products.findIndex((p) => p.id === state.editingProductId);
-      if (idx !== -1) {
-        state.products[idx] = { ...state.products[idx], ...draftProd };
-      }
-    } else {
-      state.products.unshift(draftProd);
-    }
-
-    state.editingProductId = null;
-    state.productDraft = null;
-    state.formError = '';
-    state.activeView = 'catalogue';
-    state.catalogueFilter = 'draft';
-    render();
-    showNotice('Product specifications saved as draft. Found under Drafts in Catalogue.');
+    form.elements.submitForReview.checked = false;
+    state.productDraft = { ...state.productDraft, submitForReview: false };
+    form.requestSubmit();
     return;
   }
 
@@ -4030,7 +4768,8 @@ document.addEventListener('click', async (event) => {
     document.querySelectorAll('.sim-size-pill').forEach((p) => {
       p.classList.toggle('active', p.dataset.size === state.simSelectedSize);
     });
-    showSimToast(`Selected Size: EU ${state.simSelectedSize}`);
+    const options = productOptionFields(currentProductCategoryProfile());
+    showSimToast(`Selected ${options.primaryLabel}: ${options.primaryPrefix}${state.simSelectedSize}`);
     return;
   }
 
@@ -4064,21 +4803,22 @@ document.addEventListener('click', async (event) => {
     const checkedColors = Array.from(document.querySelectorAll('input[name="variantColor"]:checked')).map((el) => el.value);
 
     if (!state.productDraft) state.productDraft = {};
-    state.productDraft.selectedSizes = checkedSizes.length > 0 ? checkedSizes : ['42'];
-    state.productDraft.selectedColors = checkedColors.length > 0 ? checkedColors : ['Black'];
+    state.productDraft.selectedSizes = checkedSizes;
+    state.productDraft.selectedColors = checkedColors;
 
-    const skuVal = document.getElementById('prod-sku')?.value || 'SFBF-SKU';
-    const priceVal = document.getElementById('prod-price')?.value || '45000';
+    const skuVal = document.getElementById('prod-sku')?.value || '';
+    const priceVal = document.getElementById('prod-price')?.value || '';
+    const options = productOptionFields(currentProductCategoryProfile());
     const tbody = document.getElementById('variant-matrix-tbody');
     if (tbody) {
       const rowsHtml = state.productDraft.selectedSizes.flatMap((size) =>
         state.productDraft.selectedColors.map((color) => ({ size, color }))
       ).slice(0, 100).map(({ size, color }, idx) => `
           <tr>
-            <td><strong>EU ${size} / ${color}</strong></td>
+            <td><strong>${escapeHtml(`${options.primaryPrefix}${size} / ${color}`)}</strong></td>
             <td><input class="variant-matrix-input" data-variant-field="sku" data-option-size="${escapeAttribute(size)}" data-option-color="${escapeAttribute(color)}" value="${escapeAttribute(`${skuVal}-${size}-${color.replace(/\s+/g, '-').toUpperCase()}`)}" /></td>
             <td><input class="variant-matrix-input" data-variant-field="price" type="number" min="1" value="${escapeAttribute(priceVal)}" /></td>
-            <td><input class="variant-matrix-input" data-variant-field="stock" type="number" min="0" value="${Math.max(2, 6 - idx)}" /></td>
+            <td><input class="variant-matrix-input" data-variant-field="stock" type="number" min="0" placeholder="0" value="" /></td>
           </tr>`).join('');
       tbody.innerHTML = rowsHtml;
     }
@@ -4087,7 +4827,7 @@ document.addEventListener('click', async (event) => {
     if (detailSizes) {
       detailSizes.innerHTML = state.productDraft.selectedSizes.map((sz, i) => `
         <button type="button" class="sim-size-pill ${i === 0 ? 'active' : ''}" data-action="sim-select-size" data-size="${sz}">
-          EU ${sz}
+          ${options.primaryPrefix}${sz}
         </button>
       `).join('');
     }
@@ -4248,6 +4988,10 @@ document.addEventListener('click', async (event) => {
 
 // Search & Live Studio Input Handler
 document.addEventListener('input', (event) => {
+  if (event.target.form?.id === 'product-form' && event.target.name && event.target.type !== 'file') {
+    state.productDraft ||= {};
+    state.productDraft[event.target.name] = event.target.type === 'checkbox' ? event.target.checked : event.target.value;
+  }
   if (event.target.id === 'catalogue-search') {
     state.catalogueSearch = event.target.value.trim().toLowerCase();
     document.querySelectorAll('[data-product-row]').forEach((row) => {
@@ -4268,9 +5012,10 @@ document.addEventListener('input', (event) => {
   }
 
   // Live sync of Product Studio Shopper Preview & Realtime Calculators
-  if (['prod-title', 'prod-price', 'prod-compare-price', 'prod-stock', 'prod-image', 'prod-brand', 'prod-bullet1', 'prod-bullet2', 'prod-bullet3', 'prod-desc'].includes(event.target.id)) {
-    const titleVal = document.getElementById('prod-title')?.value || 'Product Title';
-    const brandVal = document.getElementById('prod-brand')?.value || 'SellFast Signature';
+  if (['prod-title', 'prod-category', 'prod-price', 'prod-compare-price', 'prod-stock', 'prod-image', 'prod-brand', 'prod-bullet1', 'prod-bullet2', 'prod-bullet3', 'prod-desc', 'prod-care', 'prod-weight', 'prod-dims'].includes(event.target.id)) {
+    const enteredTitle = document.getElementById('prod-title')?.value || '';
+    const titleVal = enteredTitle || 'Your product name';
+    const brandVal = document.getElementById('prod-brand')?.value || 'Your brand';
     const priceVal = Number(document.getElementById('prod-price')?.value) || 0;
     const compareVal = Number(document.getElementById('prod-compare-price')?.value) || 0;
     const stockVal = Number(document.getElementById('prod-stock')?.value) || 0;
@@ -4279,10 +5024,13 @@ document.addEventListener('input', (event) => {
     const b2 = document.getElementById('prod-bullet2')?.value?.trim();
     const b3 = document.getElementById('prod-bullet3')?.value?.trim();
     const descVal = document.getElementById('prod-desc')?.value?.trim() || '';
+    const careVal = document.getElementById('prod-care')?.value?.trim() || '';
+    const weightVal = document.getElementById('prod-weight')?.value?.trim() || '';
+    const dimensionsVal = document.getElementById('prod-dims')?.value?.trim() || '';
 
     // Title & Char Count
     const charCount = document.getElementById('title-char-count');
-    if (charCount) charCount.textContent = titleVal.length;
+    if (charCount) charCount.textContent = enteredTitle.length;
     const titleEl = document.getElementById('preview-title-text');
     if (titleEl) titleEl.textContent = titleVal;
     const detailTitleEl = document.getElementById('detail-title-text');
@@ -4324,11 +5072,7 @@ document.addEventListener('input', (event) => {
     }
 
     // Escrow & Settlement Calculations
-    const calcCust = document.getElementById('calc-customer-val');
-    const calcFee = document.getElementById('calc-fee-val');
     const calcPayout = document.getElementById('calc-payout-val');
-    if (calcCust) calcCust.textContent = formattedPrice;
-    if (calcFee) calcFee.textContent = `-${formatNaira(Math.round(priceVal * 0.05 * 100))}`;
     if (calcPayout) calcPayout.textContent = formatNaira(Math.round(priceVal * 0.95 * 100));
 
     // Stock Status
@@ -4348,6 +5092,10 @@ document.addEventListener('input', (event) => {
       if (previewImgEl) previewImgEl.src = imgVal;
       if (detailHeroEl) detailHeroEl.src = imgVal;
       if (coverThumbEl) coverThumbEl.src = imgVal;
+      previewImgEl?.removeAttribute('hidden');
+      detailHeroEl?.removeAttribute('hidden');
+      document.getElementById('preview-card-empty')?.setAttribute('hidden', '');
+      document.getElementById('detail-hero-empty')?.setAttribute('hidden', '');
     }
 
     // Bullet points
@@ -4356,12 +5104,16 @@ document.addEventListener('input', (event) => {
       const listItems = [b1, b2, b3].filter(Boolean);
       bulletsUl.innerHTML = listItems.length > 0
         ? listItems.map((b) => `<li>${escapeHtml(b)}</li>`).join('')
-        : '<li>100% Genuine Certified Quality</li>';
+        : '';
     }
+    const descriptionEl = document.getElementById('detail-description-text');
+    if (descriptionEl) { descriptionEl.textContent = descVal; descriptionEl.hidden = !descVal; }
+    const careEl = document.getElementById('detail-care-text');
+    if (careEl) { careEl.innerHTML = `<strong>Care:</strong> ${escapeHtml(careVal)}`; careEl.hidden = !careVal; }
 
     // Quality Score Checklist
-    const isTitleOk = titleVal.trim().length >= 10;
-    const isImgOk = Boolean(safeUrl(imgVal) || imgVal?.startsWith('assets/'));
+    const isTitleOk = enteredTitle.trim().length >= 10;
+    const isImgOk = Boolean(safeUrl(imgVal) || imgVal?.startsWith('assets/')) && state.productDraft?.imageValidation?.valid !== false;
     const isPriceOk = priceVal > 0;
     const isStockOk = stockVal > 0;
     const isDescOk = descVal.length >= 20 || (b1 && b2);
@@ -4378,13 +5130,14 @@ document.addEventListener('input', (event) => {
     updateChk('chk-price', isPriceOk, 'Valid Retail Naira Price');
     updateChk('chk-stock', isStockOk, 'Inventory Units Configured');
     updateChk('chk-desc', isDescOk, 'Specifications & Bullet Highlights');
+    updateChk('chk-shipping', Boolean(weightVal && dimensionsVal), 'Packed weight and size added');
 
     const catSelected = Boolean(document.getElementById('prod-category')?.value);
-    const passedCount = [isTitleOk, catSelected, isImgOk, isPriceOk, isStockOk, isDescOk].filter(Boolean).length;
-    const scorePct = Math.round((passedCount / 6) * 100);
+    const passedCount = [isTitleOk, catSelected, isImgOk, isPriceOk, isStockOk, isDescOk, Boolean(weightVal && dimensionsVal)].filter(Boolean).length;
+    const scorePct = Math.round((passedCount / 7) * 100);
 
     const countText = document.getElementById('quality-count-text');
-    if (countText) countText.textContent = `${passedCount}/6 Standards Met`;
+    if (countText) countText.textContent = `${passedCount}/7 Checks complete`;
 
     const scorePill = document.getElementById('quality-score-pill');
     if (scorePill) {
@@ -4477,6 +5230,14 @@ document.addEventListener('change', (event) => {
     return;
   }
 
+  if (event.target.id === 'prod-image-file') {
+    const file = event.target.files?.[0];
+    if (file) {
+      uploadProductMediaImage(file);
+    }
+    return;
+  }
+
   if (event.target.id === 'catalogue-category-filter') {
     state.catalogueCategory = event.target.value;
     render();
@@ -4487,8 +5248,200 @@ document.addEventListener('change', (event) => {
     const catText = catSelect.options[catSelect.selectedIndex]?.text;
     const catEl = document.getElementById('preview-cat-text');
     if (catEl && catText && catText !== 'Select Category') catEl.textContent = catText;
+    document.getElementById('prod-category')?.dispatchEvent(new Event('input', { bubbles: true }));
+    state.productDraft ||= {};
+    state.productDraft.selectedSizes = [];
+    state.productDraft.selectedColors = [];
+    state.productDraft.variantMatrix = [];
+    state.simSelectedSize = null;
+    render();
   }
 });
+
+async function uploadProductMediaImage(file) {
+  if (!file || state.isUploadingProductImage || state.busy) return;
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  const maxBytes = 5 * 1024 * 1024;
+  if (!allowedTypes.includes(file.type)) {
+    showNotice('Invalid image format. Only JPEG, PNG, and WebP images are accepted for marketplace listings.', 'error');
+    const statusEl = document.getElementById('prod-image-upload-status');
+    if (statusEl) {
+      statusEl.style.display = 'flex';
+      statusEl.innerHTML = `${icon('alert-circle')} <span style="color:var(--rose-600);font-weight:600;">Invalid image format. Only JPEG, PNG, and WebP files are supported.</span>`;
+    }
+    return;
+  }
+  if (file.size > maxBytes) {
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+    showNotice(`Image exceeds 5MB limit (${sizeMb} MB). Please select an optimized image.`, 'error');
+    const statusEl = document.getElementById('prod-image-upload-status');
+    if (statusEl) {
+      statusEl.style.display = 'flex';
+      statusEl.innerHTML = `${icon('alert-circle')} <span style="color:var(--rose-600);font-weight:600;">Image exceeds 5MB (${sizeMb} MB). Please choose a smaller image.</span>`;
+    }
+    return;
+  }
+
+  const profile = currentProductCategoryProfile();
+  let dimensions;
+  try {
+    dimensions = await imageDimensions(file);
+  } catch (error) {
+    showNotice(error.message, 'error');
+    return;
+  }
+  if (!imageFitsProfile(dimensions.width, dimensions.height, profile)) {
+    const message = `${file.name} is ${dimensions.width} × ${dimensions.height}px. ${profile.label} is required for this category.`;
+    const statusEl = document.getElementById('prod-image-upload-status');
+    state.productDraft ||= {};
+    state.productDraft.imageValidation = { valid: false, ...dimensions, profile: profile.key };
+    if (statusEl) {
+      statusEl.style.display = 'flex';
+      statusEl.innerHTML = `${icon('alert-circle')} <span style="color:var(--rose-600);font-weight:600;">${escapeHtml(message)}</span>`;
+    }
+    showNotice(message, 'error');
+    return;
+  }
+
+  const merchantId = state.merchant.id;
+  const draft = state.productDraft ||= {};
+  draft.imageValidation = { valid: true, ...dimensions, profile: profile.key };
+  const uploadBtn = document.querySelector('[data-action="trigger-product-image-upload"]');
+  const uploadStatus = document.getElementById('prod-image-upload-status');
+
+  try {
+    state.isUploadingProductImage = true;
+    document.querySelectorAll('#product-form button[type="submit"], #product-form [data-action="save-as-draft"]').forEach((button) => { button.disabled = true; });
+    if (uploadBtn) {
+      uploadBtn.disabled = true;
+      uploadBtn.innerHTML = `Uploading image...`;
+    }
+    if (uploadStatus) {
+      uploadStatus.style.display = 'flex';
+      uploadStatus.innerHTML = `${icon('clock')} <span style="color:var(--forest-800);font-weight:600;">Uploading ${escapeHtml(file.name)} to secure storage...</span>`;
+    }
+
+    // Step 1: Request signed upload URL from Core API
+    const uploadRes = await api(`/v1/catalog-management/merchant/${merchantId}/media/upload-url`, {
+      method: 'POST',
+      idempotencyScope: 'catalog-media-upload',
+      body: {
+        contentType: file.type,
+        sizeBytes: file.size,
+        filename: file.name,
+      },
+    });
+
+    if (!uploadRes?.path || !uploadRes?.token || !uploadRes?.publicUrl) {
+      throw new Error('Failed to obtain a secure product media upload URL.');
+    }
+
+    // Use the storage SDK so multipart encoding and signed-token headers are correct.
+    const { error: uploadError } = await state.client.storage
+      .from('product-media')
+      .uploadToSignedUrl(uploadRes.path, uploadRes.token, file, { contentType: file.type });
+    if (uploadError) throw new Error(`Photo upload failed: ${uploadError.message}`);
+
+    // Step 3: Populate imageUrl input and preview thumbnails
+    const publicUrl = uploadRes.publicUrl;
+    if (state.merchant?.id !== merchantId || state.productDraft !== draft) return;
+    draft.imageUrl = publicUrl;
+    const imgInput = document.getElementById('prod-image');
+    const thumbPreview = document.getElementById('cover-thumb-preview');
+    const cardMockImg = document.getElementById('preview-card-img') || document.getElementById('mockup-cover-img');
+    const detailMockImg = document.getElementById('detail-hero-img') || document.getElementById('mockup-detail-img');
+    if (imgInput) {
+      imgInput.value = publicUrl;
+      imgInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (thumbPreview) thumbPreview.src = publicUrl;
+    thumbPreview?.removeAttribute('hidden');
+    document.getElementById('cover-thumb-empty')?.setAttribute('hidden', '');
+    if (cardMockImg) cardMockImg.src = publicUrl;
+    if (detailMockImg) detailMockImg.src = publicUrl;
+
+    if (state.productDraft) {
+      state.productDraft.imageUrl = publicUrl;
+    }
+
+    if (uploadStatus) {
+      uploadStatus.style.display = 'flex';
+      uploadStatus.innerHTML = `${icon('check-circle')} <span style="color:var(--forest-900);font-weight:600;">${escapeHtml(file.name)} (${dimensions.width} × ${dimensions.height}px) meets the ${escapeHtml(profile.key)} image rules.</span>`;
+    }
+    showNotice('Product image uploaded successfully!', 'success');
+  } catch (err) {
+    console.error('Image upload failed:', err);
+    if (uploadStatus) {
+      uploadStatus.style.display = 'flex';
+      uploadStatus.innerHTML = `${icon('alert-circle')} <span style="color:var(--rose-600);font-weight:600;">${escapeHtml(err.message || 'Image upload failed.')}</span>`;
+    }
+    showNotice(err.message || 'Image upload failed. Please verify your connection and try again.', 'error');
+  } finally {
+    state.isUploadingProductImage = false;
+    const fileInput = document.getElementById('prod-image-file');
+    if (fileInput) fileInput.value = '';
+    document.querySelectorAll('#product-form button[type="submit"], #product-form [data-action="save-as-draft"]').forEach((button) => { button.disabled = Boolean(state.busy); });
+    if (uploadBtn) {
+      uploadBtn.disabled = false;
+      uploadBtn.innerHTML = `${icon('upload')} Choose Image from Device or Gallery`;
+    }
+  }
+}
+
+document.addEventListener('dragover', (event) => {
+  const dropzone = event.target.closest('#prod-image-dropzone');
+  if (dropzone) {
+    event.preventDefault();
+    dropzone.classList.add('drag-over');
+  }
+});
+
+document.addEventListener('dragleave', (event) => {
+  const dropzone = event.target.closest('#prod-image-dropzone');
+  if (dropzone) {
+    dropzone.classList.remove('drag-over');
+  }
+});
+
+document.addEventListener('drop', (event) => {
+  const dropzone = event.target.closest('#prod-image-dropzone');
+  if (dropzone) {
+    event.preventDefault();
+    dropzone.classList.remove('drag-over');
+    const file = event.dataTransfer?.files?.[0];
+    if (file) {
+      uploadProductMediaImage(file);
+    }
+  }
+});
+
+function setInlineAuthError(form, msg) {
+  state.authError = msg;
+  if (!form || !form.isConnected) {
+    render();
+    return;
+  }
+  let summary = form.querySelector('.error-summary');
+  if (!summary) {
+    summary = document.createElement('div');
+    summary.className = 'error-summary';
+    summary.setAttribute('role', 'alert');
+    const anchor = form.querySelector('.auth-subtitle') || form.querySelector('.auth-title') || form.firstElementChild;
+    if (anchor) {
+      anchor.insertAdjacentElement('afterend', summary);
+    } else {
+      form.prepend(summary);
+    }
+  }
+  summary.innerHTML = `${icon('alert-circle')} <span>${escapeHtml(msg)}</span>`;
+  hydrateIcons();
+}
+
+function clearInlineAuthError(form) {
+  state.authError = '';
+  const summary = form.querySelector('.error-summary');
+  if (summary) summary.remove();
+}
 
 // Form Submissions
 document.addEventListener('submit', async (event) => {
@@ -4497,26 +5450,40 @@ document.addEventListener('submit', async (event) => {
 
   // Sign In Form (Password)
   if (form.id === 'sign-in-form') {
-    const email = form.elements.email.value.trim();
-    const password = form.elements.password.value;
+    const email = form.elements.email?.value?.trim() || '';
+    const password = form.elements.password?.value || '';
+    state.pendingEmail = email;
+    state.pendingPassword = password;
+
     if (!email || !password) {
-      state.authError = 'Please provide both your work email and password.';
-      render();
+      setInlineAuthError(form, 'Please provide both your work email and password.');
       return;
     }
+
+    clearInlineAuthError(form);
     state.busy = 'sign-in';
-    state.authError = '';
-    render();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = 'Authenticating…';
+    }
 
     try {
       const { data, error } = await state.client.auth.signInWithPassword({ email, password });
       if (error || !data.session) throw new Error(error?.message || 'Authentication failed.');
       state.session = data.session;
+      state.workspaceError = '';
+      state.authError = '';
+      state.pendingPassword = '';
       showNotice('Signed in successfully!');
       await loadWorkspace();
     } catch (err) {
-      state.authError = err.message || 'Sign in failed. Check your email and password.';
-      render();
+      setInlineAuthError(form, err.message || 'Sign in failed. Check your email and password.');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `${icon('log-in')} Sign In to Merchant Portal`;
+        hydrateIcons();
+      }
     } finally {
       state.busy = null;
     }
@@ -4525,16 +5492,19 @@ document.addEventListener('submit', async (event) => {
 
   // 1-Time Signup OTP Verification Form
   if (form.id === 'verify-otp-form') {
-    const token = form.elements.otpCode.value.trim();
+    const token = form.elements.otpCode?.value?.trim() || '';
     if (!token || token.length < 6) {
-      state.authError = 'Please enter the 6-digit OTP code sent to your email.';
-      render();
+      setInlineAuthError(form, 'Please enter the 6-digit OTP code sent to your email.');
       return;
     }
 
+    clearInlineAuthError(form);
     state.busy = 'verify-otp';
-    state.authError = '';
-    render();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = 'Verifying…';
+    }
 
     try {
       let res = await state.client.auth.verifyOtp({
@@ -4556,11 +5526,17 @@ document.addEventListener('submit', async (event) => {
       }
 
       state.session = res.data.session;
+      state.workspaceError = '';
+      state.authError = '';
       showNotice('Email verified! Opening your merchant workspace…');
       await loadWorkspace();
     } catch (err) {
-      state.authError = err.message || 'Verification failed. Check the 6-digit code.';
-      render();
+      setInlineAuthError(form, err.message || 'Verification failed. Check the 6-digit code.');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `${icon('check-circle')} Verify Code & Open Portal`;
+        hydrateIcons();
+      }
     } finally {
       state.busy = null;
     }
@@ -4569,22 +5545,25 @@ document.addEventListener('submit', async (event) => {
 
   // Sign Up Form (Captures details and sends 1-time OTP)
   if (form.id === 'sign-up-form') {
-    const email = form.elements.email.value.trim();
-    const password = form.elements.password.value;
-    const fullName = form.elements.fullName.value.trim();
-    const businessName = form.elements.businessName.value.trim();
-    const phone = form.elements.phone.value.trim();
+    const email = form.elements.email?.value?.trim() || '';
+    const password = form.elements.password?.value || '';
+    const fullName = form.elements.fullName?.value?.trim() || '';
+    const businessName = form.elements.businessName?.value?.trim() || '';
+    const phone = form.elements.phone?.value?.trim() || '';
+    state.pendingEmail = email;
 
     if (!email || !password || !fullName || !businessName) {
-      state.authError = 'Please fill out all required registration fields.';
-      render();
+      setInlineAuthError(form, 'Please fill out all required registration fields.');
       return;
     }
 
+    clearInlineAuthError(form);
     state.busy = 'sign-up';
-    state.authError = '';
-    state.pendingEmail = email;
-    render();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = 'Creating Account…';
+    }
 
     try {
       const { data, error } = await state.client.auth.signUp({
@@ -4592,22 +5571,29 @@ document.addEventListener('submit', async (event) => {
         password,
         options: {
           data: { full_name: fullName, business_name: businessName, phone },
+          emailRedirectTo: new URL('/account-access.html', window.location.origin).href,
         },
       });
       if (error) throw new Error(error.message);
 
       if (data.session) {
         state.session = data.session;
+        state.workspaceError = '';
+        state.authError = '';
         showNotice('Merchant account created successfully!');
         await loadWorkspace();
       } else {
-        state.authMode = 'verify-otp';
-        showNotice(`Account registered! Enter the 6-digit code sent to ${email}`);
+        state.authMode = 'signin';
+        showNotice('Check your email to confirm your account, then sign in.');
         render();
       }
     } catch (err) {
-      state.authError = err.message || 'Registration failed.';
-      render();
+      setInlineAuthError(form, err.message || 'Registration failed.');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `${icon('user-plus')} Create Account & Send OTP`;
+        hydrateIcons();
+      }
     } finally {
       state.busy = null;
     }
@@ -4616,24 +5602,36 @@ document.addEventListener('submit', async (event) => {
 
   // Password Recovery Form
   if (form.id === 'recover-form') {
-    const email = form.elements.email.value.trim();
+    const email = form.elements.email?.value?.trim() || '';
+    state.pendingEmail = email;
     if (!email) {
-      state.authError = 'Please enter your account email.';
-      render();
+      setInlineAuthError(form, 'Please enter your account email.');
       return;
     }
+
+    clearInlineAuthError(form);
     state.busy = 'recover';
-    render();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = 'Sending Link…';
+    }
+
     try {
-      const { error } = await state.client.auth.resetPasswordForEmail(email);
+      const { error } = await state.client.auth.resetPasswordForEmail(email, { redirectTo: new URL('/account-access.html', window.location.origin).href });
       if (error) throw new Error(error.message);
       showNotice('Password reset link sent to your email!');
       state.authMode = 'signin';
+      render();
     } catch (err) {
-      state.authError = err.message || 'Could not send reset link.';
+      setInlineAuthError(form, err.message || 'Could not send reset link.');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `${icon('send')} Send Reset Link`;
+        hydrateIcons();
+      }
     } finally {
       state.busy = null;
-      render();
     }
     return;
   }
@@ -4643,6 +5641,7 @@ document.addEventListener('submit', async (event) => {
     const fullName = form.elements.fullName.value.trim();
     const businessName = form.elements.businessName.value.trim();
     const description = form.elements.description.value.trim();
+    const careInstructions = form.elements.careInstructions?.value.trim() || '';
     const contactEmail = form.elements.contactEmail.value.trim();
     const contactPhone = form.elements.contactPhone.value.trim();
     const stateVal = form.elements.state.value;
@@ -4754,6 +5753,11 @@ document.addEventListener('submit', async (event) => {
 
   // Product Studio Form (Create or Edit)
   if (form.id === 'product-form') {
+    if (state.isUploadingProductImage || state.busy) {
+      showNotice('Please wait for the current upload or save to finish.', 'error');
+      return;
+    }
+    state.productDraft = { ...state.productDraft, ...Object.fromEntries(new FormData(form)), submitForReview: form.elements.submitForReview.checked };
     const title = form.elements.title.value.trim();
     const categoryId = form.elements.categoryId.value;
     const brand = form.elements.brand?.value.trim() || 'SellFast Signature';
@@ -4772,12 +5776,13 @@ document.addEventListener('submit', async (event) => {
     const bullet1 = form.elements.bullet1?.value.trim() || '';
     const bullet2 = form.elements.bullet2?.value.trim() || '';
     const bullet3 = form.elements.bullet3?.value.trim() || '';
-    const weightKg = form.elements.weightKg?.value.trim() || '0.85';
-    const dimensionsCm = form.elements.dimensionsCm?.value.trim() || '33 × 21 × 12';
+    const weightKg = form.elements.weightKg?.value.trim() || '';
+    const dimensionsCm = form.elements.dimensionsCm?.value.trim() || '';
     const returnPolicy = form.elements.returnPolicy?.value || '7_day_escrow';
     const warranty = form.elements.warranty?.value || '30_days';
     const submitForReview = form.elements.submitForReview.checked;
     const variantMode = state.productDraft?.variantMode || 'single';
+    const categoryName = state.categories.find((category) => category.id === categoryId)?.name || '';
 
     const priceMinor = Math.round(priceNaira * 100);
     const comparePriceMinor = comparePriceNaira > 0 ? Math.round(comparePriceNaira * 100) : undefined;
@@ -4794,7 +5799,7 @@ document.addEventListener('submit', async (event) => {
           const matrixPriceMinor = Math.round(Number(priceInput?.value) * 100);
           return {
             sku: skuInput?.value.trim() || '',
-            title: `EU ${optionSize} / ${optionColor}`,
+            title: productVariantLabel(optionSize, optionColor, categoryName),
             optionSize,
             optionColor,
             priceMinor: matrixPriceMinor,
@@ -4810,13 +5815,17 @@ document.addEventListener('submit', async (event) => {
           lowStockThreshold,
         }];
 
-    if (!title || !brand || !categoryId || !Number.isFinite(weightKgNumber) || weightKgNumber <= 0 ||
+    if (!title || !brand || !categoryId || !Number.isFinite(weightKgNumber) || weightKgNumber <= 0 || !dimensionsCm ||
       !Number.isFinite(priceNaira) || !Number.isSafeInteger(priceMinor) || priceNaira <= 0 ||
-      !description || !isMediaUrlValid(imageUrl) || variants.length === 0 || variants.some((variant) =>
+      !description || (imageUrl ? !isMediaUrlValid(imageUrl) : submitForReview) || variants.length === 0 || variants.some((variant) =>
         !variant.sku || !Number.isSafeInteger(variant.priceMinor) || variant.priceMinor <= 0 ||
         !Number.isSafeInteger(variant.availableQuantity) || variant.availableQuantity < 0
       )) {
-      state.formError = 'Please fill in all required product specification fields with valid data.';
+      if (imageUrl ? !isMediaUrlValid(imageUrl) : submitForReview) {
+        state.formError = 'Please upload a product photo from your device or gallery, or provide a valid image URL.';
+      } else {
+        state.formError = 'Please fill in all required product specification fields with valid data.';
+      }
       render();
       return;
     }
@@ -4824,6 +5833,7 @@ document.addEventListener('submit', async (event) => {
     const bulletsList = [bullet1, bullet2, bullet3].filter(Boolean);
     const formattedDescription = [
       description,
+      careInstructions ? `\n\nCare instructions:\n${careInstructions}` : '',
       bulletsList.length > 0 ? `\n\nKey Highlights:\n${bulletsList.map((b) => `• ${b}`).join('\n')}` : '',
       `\n\nProduct Specifications:\n• Brand: ${brand}\n• Condition: ${condition.replace('_', ' ')}\n• Tags: ${tags}\n• Weight: ${weightKg}kg\n• Dimensions: ${dimensionsCm}\n• Return Guarantee: ${returnPolicy.replace(/_/g, ' ')}\n• Warranty: ${warranty.replace(/_/g, ' ')}`,
     ].join('').trim();
@@ -4831,6 +5841,7 @@ document.addEventListener('submit', async (event) => {
     if (state.editingProductId) {
       const prodId = state.editingProductId;
       const existingProduct = state.products.find((p) => p.id === prodId);
+      const isRejected = existingProduct?.status === 'rejected';
       const variantId = existingProduct?.variants?.[0]?.id;
       const imageMedia = existingProduct?.media?.find((m) => m.mediaType === 'image');
 
@@ -4879,7 +5890,7 @@ document.addEventListener('submit', async (event) => {
               ]);
             }));
           }
-          const mediaUpdate = imageMedia?.id
+          const mediaUpdate = !imageUrl ? null : imageMedia?.id
             ? await api(`/v1/catalog-management/media/${imageMedia.id}`, {
                 method: 'PATCH',
                 idempotencyScope: 'catalog-media-update',
@@ -4890,7 +5901,7 @@ document.addEventListener('submit', async (event) => {
                 idempotencyScope: 'catalog-media-create',
                 body: { mediaUrl: imageUrl, mediaType: 'image', altText: title, sortOrder: 0 },
               });
-          if (submitForReview && (productUpdate.status === 'draft' || mediaUpdate?.productStatus === 'draft')) {
+          if (submitForReview && (productUpdate?.status === 'draft' || mediaUpdate?.productStatus === 'draft' || isRejected)) {
             await api(`/v1/catalog-management/products/${prodId}/submit`, {
               method: 'POST',
               idempotencyScope: 'catalog-submit',
@@ -4903,7 +5914,7 @@ document.addEventListener('submit', async (event) => {
         state.editingProductId = null;
         state.productDraft = null;
         state.activeView = 'catalogue';
-      }, 'Product specifications updated successfully.');
+      }, isRejected ? 'Product updated and resubmitted for Operations moderation.' : 'Product specifications updated successfully.');
       return;
     }
 
@@ -4926,9 +5937,11 @@ document.addEventListener('submit', async (event) => {
             warranty,
             tags: tagList,
             variants,
-            media: [{ mediaUrl: imageUrl, mediaType: 'image', altText: title, sortOrder: 0 }],
+            media: imageUrl ? [{ mediaUrl: imageUrl, mediaType: 'image', altText: title, sortOrder: 0 }] : [],
           },
         });
+        state.editingProductId = created.id;
+        state.products = [...state.products.filter((product) => product.id !== created.id), created];
         if (submitForReview && created?.id) {
           await api(`/v1/catalog-management/products/${created.id}/submit`, {
             method: 'POST',
@@ -5264,6 +6277,27 @@ document.addEventListener('submit', async (event) => {
   }
 });
 
+// Reconcile persisted auth after a suspended tab, back/forward cache restore,
+// or reconnection. Token refresh events alone must not reload active forms.
+let resumePromise = null;
+function resumeSession() {
+  if (!state.client || !state.session || document.visibilityState === 'hidden') return;
+  if (resumePromise) return resumePromise;
+  resumePromise = (async () => {
+    try {
+      const session = await getValidSession();
+      if (!session) await handleSessionExpired();
+      else if (state.workspaceError || !state.merchant) await loadWorkspace();
+    } catch (error) {
+      if (isAuthError(error)) await handleSessionExpired();
+    }
+  })().finally(() => { resumePromise = null; });
+  return resumePromise;
+}
+window.addEventListener('pageshow', resumeSession);
+window.addEventListener('online', resumeSession);
+document.addEventListener('visibilitychange', resumeSession);
+
 // Boot Sequence
 async function boot() {
   render();
@@ -5279,13 +6313,21 @@ async function boot() {
   }
 
   try {
-    state.client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
-    const { data: { session } } = await state.client.auth.getSession();
-    state.session = session;
+    state.client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
 
-    state.client.auth.onAuthStateChange((_event, nextSession) => {
+    state.client.auth.onAuthStateChange((event, nextSession) => {
+      const prevSession = state.session;
       state.session = nextSession;
-      if (!nextSession) {
+      if (!nextSession && prevSession) {
+        state.dataRequestVersion++;
+        workspaceGeneration++;
+        workspaceLoadingPromise = null;
         state.dataAbortController?.abort();
         state.merchants = [];
         state.merchant = null;
@@ -5295,21 +6337,42 @@ async function boot() {
         state.returns = [];
         state.team = [];
         state.categories = [];
+        state.modal = null;
+        state.profileDraft = null;
+        state.verificationData = null;
+        state.notifications = [];
+        state.unreadNotificationsCount = 0;
+        state.notificationsOpen = false;
+        teardownNotificationsSync();
+        state.workspaceError = '';
+        state.loading = false;
         state.authMode = 'signin';
         render();
+      } else if (nextSession && !prevSession && event !== 'INITIAL_SESSION') {
+        // Never call auth APIs while Supabase holds its auth callback lock.
+        setTimeout(() => {
+          if (state.session && !state.merchant) void loadWorkspace();
+        }, 0);
       }
     });
 
-    if (session) {
+    const validSession = await getValidSession();
+    if (validSession) {
+      state.session = validSession;
       await loadWorkspace();
     } else {
+      state.session = null;
       state.loading = false;
       render();
     }
   } catch (error) {
-    state.workspaceError = requestErrorMessage(error, 'The portal could not initialize its live services.');
-    state.loading = false;
-    render();
+    if (isAuthError(error)) {
+      await handleSessionExpired('Your session has expired. Please sign in again.');
+    } else {
+      state.workspaceError = requestErrorMessage(error, 'The portal could not initialize its live services.');
+      state.loading = false;
+      render();
+    }
   }
 
   // Smooth dismiss of the branded beige splash screen
